@@ -1,0 +1,16 @@
+{
+    "name":"SlotFillerAgent",
+    "role":"slot_filler",
+    "description":"슬롯 추출",
+    "llm": {
+        "provider":"openai",
+        "model":"gpt-4.1-mini",
+        "temperature":0
+    },
+    "policy": {
+        "max_retry": 3,
+        "backoff_sec": 1,
+        "validate": "slot_ops",
+        "schema": "SlotResult"
+      }
+    }
