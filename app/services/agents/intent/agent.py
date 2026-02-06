@@ -24,7 +24,7 @@ class IntentAgent(BaseAgent):
             stream=stream,
         )
 
-    def run(self, user_message: str) -> dict:
+    def run(self, user_message: str, **kwargs) -> dict:
         raw = self.chat([{"role": "user", "content": user_message}])
         value = raw.strip().upper()
 

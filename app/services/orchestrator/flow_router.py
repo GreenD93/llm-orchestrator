@@ -1,5 +1,4 @@
 from typing import Literal
-
 from app.services.state.models import Stage
 
 FlowType = Literal["DEFAULT_FLOW", "TRANSFER_FLOW"]
@@ -7,13 +6,12 @@ FlowType = Literal["DEFAULT_FLOW", "TRANSFER_FLOW"]
 
 class FlowRouter:
     """
-    intent + state 기반으로 어떤 flow를 탈지 결정
-    - 진행 중인 플로우는 intent보다 state를 우선
+    scenario + intent 기반 flow 결정
+    - 진행 중인 시나리오는 intent보다 scenario 우선
     """
 
     def route(self, *, intent: str, state) -> FlowType:
-        # 🔥 이미 이체 진행 중이면 intent 무시
-        if state.stage != Stage.INIT:
+        if getattr(state, "scenario", None) == "TRANSFER":
             return "TRANSFER_FLOW"
 
         if intent == "TRANSFER":

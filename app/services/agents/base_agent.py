@@ -26,6 +26,7 @@ class BaseAgent:
         self.system_prompt = system_prompt
         self.model = cfg["model"]
         self.temperature = cfg.get("temperature", 0.0)
+        self.timeout = cfg.get("timeout_sec")
 
         self.llm = OpenAIClient()
         self.logger = setup_logger(self.__class__.__name__)
@@ -36,6 +37,7 @@ class BaseAgent:
             model=self.model,
             temperature=self.temperature,
             messages=[{"role": "system", "content": self.system_prompt}, *messages],
+            timeout=self.timeout,
         )
         return resp.choices[0].message.content.strip()
 
@@ -44,6 +46,7 @@ class BaseAgent:
             model=self.model,
             temperature=self.temperature,
             messages=[{"role": "system", "content": self.system_prompt}, *messages],
+            timeout=self.timeout,
         )
 
     # ===== Agent interface =====

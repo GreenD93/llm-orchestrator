@@ -1,5 +1,4 @@
 # app/services/execution/execution_agent.py
-
 import time
 import traceback
 from typing import Any, Callable, Generator
@@ -44,11 +43,19 @@ class ExecutionAgent:
         validator,
         max_retry: int,
         backoff_sec: int,
+        timeout_sec: int | None,
         state=None,
     ):
         for attempt in range(1, max_retry + 1):
+            started = time.monotonic()
             try:
                 result = call()
+
+                elapsed = time.monotonic() - started
+                if timeout_sec and elapsed > timeout_sec:
+                    raise RetryableError(
+                        f"timeout_exceeded: {elapsed:.2f}s > {timeout_sec}s"
+                    )
 
                 if validator and not validator(result):
                     raise RetryableError("validation_failed")
@@ -64,13 +71,16 @@ class ExecutionAgent:
                 self.logger.warning(
                     f"[{agent_name}] retry {attempt}/{max_retry}: {e}"
                 )
+
                 if attempt >= max_retry:
                     if state:
                         state.meta["execution"] = {
                             "agent": agent_name,
                             "error": str(e),
+                            "attempt": attempt,
                         }
                     raise
+
                 time.sleep(backoff_sec * attempt)
 
             except Exception as e:
@@ -88,10 +98,18 @@ class ExecutionAgent:
         *,
         agent_name: str,
         call: Callable[[], Generator],
+        timeout_sec: int | None,
         state=None,
     ):
+        started = time.monotonic()
         try:
             for event in call():
+                if timeout_sec:
+                    elapsed = time.monotonic() - started
+                    if elapsed > timeout_sec:
+                        raise RetryableError(
+                            f"stream_timeout_exceeded: {elapsed:.2f}s > {timeout_sec}s"
+                        )
                 yield event
         except Exception as e:
             self.logger.error(f"[{agent_name}] stream failed: {e}")
@@ -107,7 +125,7 @@ class ExecutionAgent:
 class AgentExecutor:
     """
     - 실행
-    - retry / schema / validation
+    - retry / schema / validation / timeout
     - FLOW hook 생성
     """
 
@@ -120,11 +138,12 @@ class AgentExecutor:
         self.validator = VALIDATOR_MAP.get(policy.get("validate"))
         self.max_retry = policy.get("max_retry", 1)
         self.backoff_sec = policy.get("backoff_sec", 1)
+        self.timeout_sec = policy.get("timeout_sec")  # ✅ 추가
 
     def flow(self, *, step: str, state, extra=None):
         payload = {
             "stage": state.stage,
-            "missing_required": state.missing_required,
+            "missing_required": getattr(state, "missing_required", []),
         }
         if extra:
             payload.update(extra)
@@ -143,6 +162,7 @@ class AgentExecutor:
             for ev in self.exec.run_stream(
                 agent_name=self.name,
                 call=lambda: self.agent.run_stream(*args, **kwargs),
+                timeout_sec=self.timeout_sec,
                 state=state,
             ):
                 yield ev
@@ -157,6 +177,7 @@ class AgentExecutor:
             validator=self.validator,
             max_retry=self.max_retry,
             backoff_sec=self.backoff_sec,
+            timeout_sec=self.timeout_sec,
             state=state,
         )
 

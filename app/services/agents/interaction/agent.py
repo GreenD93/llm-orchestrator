@@ -1,7 +1,7 @@
-# app/services/agents/interaction/agent.py
 import json
 from app.services.agents.base_agent import BaseAgent
 from app.services.events import EventType
+from app.services.agents.schemas import InteractionResult
 from .prompt import SYSTEM_PROMPT
 
 _FALLBACK = {
@@ -43,6 +43,8 @@ class InteractionAgent(BaseAgent):
 
     def _parse(self, raw: str) -> dict:
         try:
-            return json.loads(raw)
+            data = json.loads(raw)
+            InteractionResult.model_validate(data)
+            return data
         except Exception:
             return _FALLBACK.copy()

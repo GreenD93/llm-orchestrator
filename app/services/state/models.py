@@ -1,13 +1,8 @@
-# app/services/state/models.py
-
 from enum import Enum
 from typing import Optional, List, Dict, Any
 from pydantic import BaseModel, Field
 
 
-# =========================
-# Stage 정의
-# =========================
 class Stage(str, Enum):
     INIT = "INIT"
     FILLING = "FILLING"
@@ -26,20 +21,15 @@ TERMINAL_STAGES = {
 }
 
 
-# =========================
-# BaseState (템플릿용 공통 State)
-# =========================
 class BaseState(BaseModel):
     """
-    모든 시나리오 공통 State 베이스
+    모든 시나리오 공통 State
     """
+    scenario: str = "DEFAULT"
     stage: Stage = Stage.INIT
     meta: Dict[str, Any] = Field(default_factory=dict)
 
 
-# =========================
-# Transfer 전용 Slots
-# =========================
 class Slots(BaseModel):
     target: Optional[str] = None
     amount: Optional[int] = None
@@ -48,13 +38,11 @@ class Slots(BaseModel):
     transfer_date: Optional[str] = None
 
 
-# =========================
-# TransferState
-# =========================
 class TransferState(BaseState):
     """
     이체 시나리오 전용 State
     """
+    scenario: str = "TRANSFER"
     slots: Slots = Slots()
     missing_required: List[str] = Field(default_factory=list)
     filling_turns: int = 0
@@ -63,9 +51,6 @@ class TransferState(BaseState):
         return any(v is not None for v in self.slots.model_dump().values())
 
 
-# =========================
-# Slot 검증 스키마 (StateManager에서 사용)
-# =========================
 REQUIRED_SLOTS = ("target", "amount")
 
 SLOT_SCHEMA: Dict[str, Dict[str, Any]] = {

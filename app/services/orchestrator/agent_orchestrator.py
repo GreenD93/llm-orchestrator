@@ -44,9 +44,9 @@ class AgentOrchestratorService:
         self.memory_manager = MemoryManager(summarizer=SummarizerAgent())
         self.execution_agent = ExecutionAgent()
 
-        self.intent = _make_executor("intent", self.execution_agent)
-        self.slot = _make_executor("slot", self.execution_agent)
-        self.interaction = _make_executor("interaction", self.execution_agent)
+        self.intent = _make_executor("intent", self.execution_agent, stream=False)
+        self.slot = _make_executor("slot", self.execution_agent, stream=False)
+        self.interaction = _make_executor("interaction", self.execution_agent, stream=True)
 
         self._state_manager_factory = StateManager
         self.flow_router = FlowRouter()
@@ -105,7 +105,7 @@ class AgentOrchestratorService:
     def handle(self, session_id: str, user_message: str):
         final = None
         for event in self._core_stream(session_id, user_message):
-            if event["event"] == "DONE":
+            if event["event"] == EventType.DONE:
                 final = event["payload"]
 
         return {

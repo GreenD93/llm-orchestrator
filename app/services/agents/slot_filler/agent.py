@@ -1,7 +1,7 @@
-# app/services/agents/slot_filler/agent.py
 import json
 from app.services.agents.base_agent import BaseAgent
 from .prompt import SYSTEM_PROMPT
+
 
 class SlotFillerAgent(BaseAgent):
     output_schema = "SlotResult"
@@ -17,10 +17,12 @@ class SlotFillerAgent(BaseAgent):
             stream=stream,
         )
 
-    def run(self, user_message: str) -> dict:
+    def run(self, user_message: str, **kwargs) -> dict:
         raw = self.chat([{"role": "user", "content": user_message}]).strip()
         try:
             return json.loads(raw)
         except Exception:
-            # ✅ 파싱 실패 시 “아무 것도 안 함”으로 안전하게
-            return {"operations": []}
+            return {
+                "operations": [],
+                "_meta": {"parse_error": True},
+            }

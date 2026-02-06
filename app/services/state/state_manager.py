@@ -1,5 +1,3 @@
-# app/services/state/state_manager.py
-
 import re
 from datetime import datetime
 from typing import Any, Dict, Optional
@@ -30,6 +28,9 @@ class StateManager:
         self.state = state
 
     def apply(self, delta: Dict[str, Any]) -> TransferState:
+        if "_meta" in delta:
+            self.state.meta.setdefault("slot_meta", []).append(delta["_meta"])
+
         for op in delta.get("operations", []):
             self._apply_op(op)
 
@@ -40,27 +41,18 @@ class StateManager:
     def _apply_op(self, op: Dict[str, Any]) -> None:
         op_type = op.get("op")
 
-        # =========================
-        # 흐름 제어 op
-        # =========================
         if op_type == "cancel_flow":
             self.state.stage = Stage.CANCELLED
             return
 
         if op_type == "continue_flow":
-            if self.state.has_any_slot():
-                self.state.stage = Stage.FILLING
-            else:
-                self.state.stage = Stage.INIT
+            self.state.stage = Stage.FILLING if self.state.has_any_slot() else Stage.INIT
             return
 
         if op_type == "confirm":
             self.state.stage = Stage.CONFIRMED
             return
 
-        # =========================
-        # 슬롯 op
-        # =========================
         slot = op.get("slot")
         if slot not in SLOT_SCHEMA:
             self.state.meta.setdefault("invalid_ops", []).append(op)
@@ -71,15 +63,11 @@ class StateManager:
         format_spec = meta.get("format")
 
         if op_type == "set":
-            raw_value = op.get("value")
-
-            # 1️⃣ type cast
-            casted = self._cast(raw_value, slot_type)
+            casted = self._cast(op.get("value"), slot_type)
             if casted is None:
                 self.state.meta.setdefault("cast_fail_ops", []).append(op)
                 return
 
-            # 2️⃣ format normalize (있으면)
             normalized = _normalize_format(casted, format_spec)
             if normalized is None:
                 self.state.meta.setdefault("format_fail_ops", []).append(op)
@@ -89,9 +77,6 @@ class StateManager:
 
         elif op_type == "clear":
             setattr(self.state.slots, slot, None)
-
-        else:
-            self.state.meta.setdefault("unknown_ops", []).append(op)
 
     def _validate_required(self) -> None:
         self.state.missing_required = [
@@ -115,8 +100,6 @@ class StateManager:
     @staticmethod
     def _cast(value: Any, t: type) -> Any:
         try:
-            if value is None:
-                return None
-            return t(value)
+            return t(value) if value is not None else None
         except Exception:
             return None

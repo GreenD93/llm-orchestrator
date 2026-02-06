@@ -10,6 +10,7 @@
   "policy": {
     "max_retry": 2,
     "backoff_sec": 1,
+    "timeout_sec": 6,
     "validate": "intent_enum",
     "schema": "IntentResult"
   }
