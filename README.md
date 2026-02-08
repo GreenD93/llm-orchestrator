@@ -14,33 +14,34 @@ FastAPI + SSE 스트리밍을 사용하며, **프로젝트별로 Agent + Flow만
 
 ```
 app/
-├── main.py                    # FastAPI 앱, manifest 로드 → CoreOrchestrator → create_agent_router
+├── main.py                    # FastAPI 앱, manifest → CoreOrchestrator → 단일 orchestrate API
 ├── core/                      # 공통 (도메인 무관)
 │   ├── config.py
-│   ├── logging.py
-│   ├── events.py
+│   ├── context.py             # ExecutionContext (state, memory, metadata 통합)
+│   ├── hooks.py               # before_agent, after_agent, on_error, after_turn
+│   ├── events.py              # EventType 상수 (DONE, LLM_TOKEN, LLM_DONE)
 │   ├── agents/
 │   │   ├── base_agent.py
-│   │   ├── execution_agent.py # 재시도/검증/타임아웃, RetryableError·FatalExecutionError
-│   │   ├── agent_executor.py
-│   │   └── registry.py        # spec 기반 AgentExecutor 생성
+│   │   ├── agent_runner.py    # Agent 실행 단일화 (재시도/검증/타임아웃)
+│   │   └── registry.py        # get_registry, build_runner
 │   ├── orchestration/
-│   │   ├── orchestrator.py     # CoreOrchestrator
-│   │   ├── flow_router.py     # BaseFlowRouter
-│   │   └── flow_handler.py    # BaseFlowHandler
+│   │   ├── orchestrator.py    # 단일 턴 실행만 담당
+│   │   ├── flow_router.py     # 모든 flow 결정 로직 (조건문)
+│   │   ├── flow_handler.py    # Agent 실행만 (Runner 호출)
+│   │   └── flow_utils.py      # update_memory_and_save
 │   ├── memory/
-│   │   ├── memory_manager.py
-│   │   └── summarizer_agent.py
+│   │   └── memory_manager.py  # enable_memory, raw_history (요약은 after_turn 훅)
 │   ├── state/
 │   │   ├── base_state.py
 │   │   └── base_state_manager.py
-│   ├── experimental/
-│   │   └── tool_registry.py   # 선택 사항 (Tool/MCP 등록)
 │   ├── llm/
 │   │   └── openai_client.py
 │   └── api/
-│       └── router_factory.py   # create_agent_router(orchestrator) → POST/GET 라우트 자동 생성
-│
+│       ├── schemas.py         # OrchestrateRequest, OrchestrateResponse
+│       └── router_factory.py  # create_agent_router → POST/chat, POST/chat/stream, GET/completed
+├── plugins/
+│   └── experimental/          # Tool/MCP 등 (선택, core에서 미참조)
+│       └── tool_registry.py
 └── projects/
     ├── minimal/                # 최소 템플릿 (복붙 후 이름만 바꿔 새 프로젝트 시작)
     │   ├── project.yaml        # interaction 단일 agent, 1-step flow, BaseState만 사용
@@ -86,20 +87,20 @@ app/
                                           │
                                           ▼
 ┌─────────────────────────────────────────────────────────────────────────────────────────┐
-│                         CoreOrchestrator (manifest 기반 조립)                              │
-│  SessionStore  ·  CompletedStore  ·  MemoryManager + Summarizer  ·  Executors  ·  Handlers │
+│                         CoreOrchestrator (단일 턴 실행)                                    │
+│  SessionStore  ·  MemoryManager  ·  AgentRunner  ·  FlowRouter  ·  FlowHandlers           │
 └─────────────────────────────────────────────────────────────────────────────────────────┘
                                           │
                                           ▼
                               ┌───────────────────────┐
-                              │   Intent (Executor)   │
-                              │   TRANSFER / 기타     │
+                              │  Intent (Runner.run)  │
+                              │  TRANSFER / 기타      │
                               └───────────┬───────────┘
                                           │
                                           ▼
                               ┌───────────────────────┐
                               │     FlowRouter        │
-                              │  intent + state 기준   │
+                              │  intent + state 조건문  │
                               └───────────┬───────────┘
                                           │
                     ┌─────────────────────┴─────────────────────┐
@@ -108,8 +109,8 @@ app/
         │   DEFAULT_FLOW        │                   │   TRANSFER_FLOW       │
         │   (DefaultFlowHandler)│                   │ (TransferFlowHandler)│
         └───────────┬───────────┘                   └───────────┬───────────┘
-                    │  Interaction만 수행                         │  Slot → State 적용
-                    │  메모리 갱신 → DONE                          │  → Interaction → terminal 시 Completed
+                    │  Handler: interaction만 실행                  │  Handler: slot → apply → interaction
+                    │  after_turn 훅에서 메모리 갱신                 │  terminal 시 Completed, after_turn
                     └─────────────────────┬───────────────────────┘
                                           │
                                           ▼
@@ -149,13 +150,13 @@ app/
 
 | 컴포넌트 | 역할 |
 |----------|------|
-| **CoreOrchestrator** | manifest로 Session/Memory/Execution/Agents 조립, FlowRouter → FlowHandler 연결. 도메인 무관. |
-| **manifest** | project.yaml 로드, class path → 실제 클래스 resolve, CoreOrchestrator에 전달할 dict 생성. |
-| **BaseFlowRouter** | intent·state로 플로우 키 결정. 프로젝트별 상속 (예: TransferFlowRouter). |
-| **BaseFlowHandler** | executors, memory, sessions, state_manager_factory, completed 주입. `get(agent_name)`으로 executor 조회. run()은 프로젝트별 구현 (코드 DSL). |
-| **DefaultFlowHandler** | Interaction만 호출 후 메모리 갱신, DONE. |
-| **TransferFlowHandler** | Slot 호출 → StateManager.apply → Interaction → terminal이면 Completed 저장 → DONE. |
-| **AgentExecutor** | 실행 정책 단일 책임. retry, schema 검증, hooks. Agent는 실행 정책을 모름. |
+| **CoreOrchestrator** | 단일 턴만 담당. Session 로드 → Router로 flow 결정 → Handler.run(ctx) → 저장/after_turn. |
+| **manifest** | project.yaml 로드, runner·router·handlers·훅 조립. |
+| **BaseFlowRouter** | intent·state로 flow 키 반환. 프로젝트별 상속, 명시적 조건문만 사용. |
+| **BaseFlowHandler** | runner, sessions, memory_manager, state_manager_factory 주입. run(ctx)에서 Runner로 에이전트만 실행. |
+| **AgentRunner** | Agent 실행 단일화. run(name, context) / run_stream(name, context). 재시도·검증·타임아웃 포함. |
+| **ExecutionContext** | session_id, user_message, state, memory, metadata. Agent는 Context로만 상태 접근. |
+| **Registry** | 문자열 → Agent 클래스 매핑. build_runner(specs, schema_registry, validator_map)으로 Runner 생성. |
 
 ---
 
@@ -176,13 +177,13 @@ INIT → FILLING → READY → CONFIRMED
 
 ---
 
-## API 요약
+## API 요약 (단일 orchestrate 진입점)
 
-| 메서드 | 경로 | 설명 |
-|--------|------|------|
-| POST | `/v1/agent/chat` | 비스트리밍. `session_id`, `message` → `{ interaction, hooks }` |
-| POST / GET | `/v1/agent/chat/stream` | 스트리밍 (SSE). 이벤트: LLM_TOKEN, LLM_DONE, DONE |
-| GET | `/v1/agent/completed` | 세션별 완료 이력 (`session_id` 쿼리) |
+| 메서드 | 경로 | 스키마 | 설명 |
+|--------|------|--------|------|
+| POST | `/v1/agent/chat` | OrchestrateRequest → OrchestrateResponse | 비스트리밍. session_id, message → interaction, hooks |
+| POST / GET | `/v1/agent/chat/stream` | OrchestrateRequest / query | 스트리밍 SSE. 이벤트: LLM_TOKEN, LLM_DONE, DONE |
+| GET | `/v1/agent/completed` | session_id 쿼리 | 세션별 완료 이력 |
 
 ---
 
@@ -202,7 +203,7 @@ uvicorn app.main:app --reload
 
 1. **app/projects/<프로젝트명>/** 생성
 2. **project.yaml** 작성: name, agents(class, card, stream), flows(router, handlers), state.manager
-3. **manifest.py** 작성: `load_manifest()`에서 YAML 로드, class resolve, sessions_factory, completed_factory, memory_manager_factory, execution_agent_factory, executors_factory, agents, state, flows, on_error 반환
+3. **manifest.py** 작성: `load_manifest()`에서 YAML 로드, class resolve, sessions_factory, completed_factory, memory_manager_factory, **runner** (build_runner), state, flows, on_error, after_turn 반환
 4. **agents/** 에 에이전트 클래스 + cards, **state/** 에 models·state_manager·stores, **flows/** 에 router·handlers 구현
 5. **app/main.py** 에서 해당 프로젝트의 `load_manifest()` 사용
 
@@ -218,25 +219,30 @@ manifest = load_manifest()
 ## 테스트
 
 ```bash
-# transfer 프로젝트 FlowHandler 단위 테스트 (실제 LLM 호출 없이 mock)
-pytest app/projects/transfer/tests/test_flow.py -v
+# Flow 단위 테스트 (mock runner)
+pytest app/projects/transfer/tests/test_flow.py app/projects/minimal/tests/test_flow.py -v
+
+# API 스키마·엔드포인트 검증 (orchestrator mock)
+pytest app/projects/transfer/tests/test_api.py -v
 ```
 
 ---
 
-## 확장 포인트 (템플릿 옵션)
+## 확장 (유지 범위)
 
 | 항목 | 설명 |
 |------|------|
-| **EventType.FLOW** | core/events.py에서 미사용. 필요 시 enum에 추가 후 executor에서 yield. |
-| **summary_struct** | memory에 optional. summarizer가 반환할 때만 설정. |
-| **CompletedStore** | BaseFlowHandler 생성자에서 `completed=None` 허용. 완료 이력이 필요할 때만 manifest에서 전달. |
-| **knowledge/retriever** | stub 유지. RAG 연동 시 retriever 구현 후 Agent에 주입. |
+| **새 Agent 추가** | Agent 클래스 run(context) 구현, manifest agents에 등록, Handler에서 runner.run(name, ctx) 호출. |
+| **Router 조건 추가** | BaseFlowRouter 상속, route(intent, state) 안에 조건문 추가. |
+| **after_turn** | 메모리 갱신·요약 등 턴 종료 시 처리. manifest에서 after_turn 훅으로 등록. |
+| **CompletedStore** | 완료 이력 필요 시 manifest에서 completed_factory 제공. |
+| **plugins/experimental** | Tool/MCP 등 실험 기능은 plugins에 두고 core에서 참조하지 않음. |
 
 ---
 
 ## 정리
 
-- **템플릿**: core(공통) + projects(프로젝트별). project.yaml + manifest로 CoreOrchestrator 조립.
-- **라우터**: `create_agent_router(orchestrator)`로 POST/GET 엔드포인트 자동 생성. 프로젝트 추가 시 라우터 코드 작성 불필요.
-- **Flow**: 그래프 엔진 없이 Python 코드로 명시적 순서만 표현 (BaseFlowHandler 상속, get(agent_name), run() 구현).
+- **단일 턴**: Orchestrator → Router(flow 결정) → Handler(Agent 실행만). Flow는 별도 클래스 없이 Router 조건문으로 분기.
+- **Context**: state, memory, metadata는 ExecutionContext로 통합. Agent는 run(context)만 사용.
+- **API**: OrchestrateRequest/OrchestrateResponse 기준 단일 진입점. `create_agent_router(orchestrator)`로 엔드포인트 생성.
+- **확장**: 새 Agent 추가·Router 조건 추가 수준만 유지. 범용 플러그인/동적 로딩은 없음.

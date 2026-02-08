@@ -1,7 +1,7 @@
 # app/projects/transfer/agents/interaction_agent/agent.py
-
 import json
 from app.core.agents.base_agent import BaseAgent
+from app.core.context import ExecutionContext
 from app.core.events import EventType
 from app.projects.transfer.agents.schemas import InteractionResult
 from app.projects.transfer.agents.interaction_agent.prompt import get_system_prompt
@@ -17,13 +17,17 @@ class InteractionAgent(BaseAgent):
     def get_system_prompt(cls) -> str:
         return get_system_prompt()
 
-    def run(self, state, history, summary_text, summary_struct):
-        raw = self.chat(self._messages(state, history, summary_text))
+    def run(self, context: ExecutionContext, **kwargs) -> dict:
+        history = context.get_history()
+        summary_text = context.memory.get("summary_text", "")
+        raw = self.chat(self._messages(context.state, history, summary_text))
         return self._parse(raw)
 
-    def run_stream(self, state, history, summary_text, summary_struct):
+    def run_stream(self, context: ExecutionContext, **kwargs):
+        history = context.get_history()
+        summary_text = context.memory.get("summary_text", "")
         buffer = ""
-        for token in self.chat_stream(self._messages(state, history, summary_text)):
+        for token in self.chat_stream(self._messages(context.state, history, summary_text)):
             buffer += token
             yield {"event": EventType.LLM_TOKEN, "payload": token}
         yield {"event": EventType.LLM_DONE, "payload": self._parse(buffer)}

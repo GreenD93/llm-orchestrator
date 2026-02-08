@@ -1,41 +1,29 @@
-"""1-step: interaction 호출 → 메모리 갱신 → DONE."""
+"""1-step: interaction 실행 → 메모리 갱신 → DONE."""
 
 from typing import Any, Dict, Generator
 
+from app.core.context import ExecutionContext
 from app.core.events import EventType
-from app.core.orchestration import BaseFlowHandler, get_history, update_and_save
+from app.core.orchestration import BaseFlowHandler, update_memory_and_save
 
 
 class MinimalFlowHandler(BaseFlowHandler):
     """최소 플로우: interaction 한 번 실행 후 DONE."""
 
-    def run(
-        self,
-        *,
-        session_id: str,
-        state: Any,
-        memory: dict,
-        user_message: str,
-    ) -> Generator[Dict[str, Any], None, None]:
-        history = get_history(memory)
-        summary_text = memory.get("summary_text", "")
-        summary_struct = memory.get("summary_struct")
-        interaction = self.get("interaction")
+    def run(self, ctx: ExecutionContext) -> Generator[Dict[str, Any], None, None]:
         payload = None
-        for ev in interaction.call(
-            state, history, summary_text, summary_struct, state=state, stream=True
-        ):
+        for ev in self.runner.run_stream("interaction", ctx):
             yield ev
             if ev.get("event") == EventType.LLM_DONE:
                 payload = ev.get("payload") or {}
         if payload:
-            update_and_save(
-                self.memory,
+            update_memory_and_save(
+                self.memory_manager,
                 self.sessions,
-                session_id,
-                state,
-                memory,
-                user_message,
+                ctx.session_id,
+                ctx.state,
+                ctx.memory,
+                ctx.user_message,
                 payload.get("message", ""),
             )
         yield {

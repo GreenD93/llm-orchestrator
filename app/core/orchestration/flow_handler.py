@@ -1,31 +1,34 @@
 # app/core/orchestration/flow_handler.py
-"""FlowHandler: 업무 순서 정의만. executors 접근, run() 추상, get(agent_name). 공통 로직은 flow_utils 사용."""
+"""FlowHandler: agent 실행만. run(ctx)에서 Runner로 에이전트 호출·이벤트 yield. flow 결정은 Router 담당."""
 
 from typing import Any, Dict, Generator
+
+from app.core.context import ExecutionContext
 
 
 class BaseFlowHandler:
     """
-    - executors 접근, get(agent_name), run() 추상 메서드만 보유.
-    - history/저장 등 공통 로직은 flow_utils.get_history, flow_utils.update_and_save 사용.
+    executors 대신 runner 한 개. get(agent_name)으로 Runner.run(agent_name, ctx) 호출.
+    업무 순서만 정의하고, 세션/메모리 저장은 필요 시 flow_utils.update_memory_and_save 사용.
     """
 
     def __init__(
         self,
-        executors: Dict[str, Any],
-        memory: Any,
+        runner: Any,  # AgentRunner
         sessions: Any,
+        memory_manager: Any,
         state_manager_factory: Any,
         completed: Any = None,
     ):
-        self.executors = executors
-        self.memory = memory
+        self.runner = runner
         self.sessions = sessions
+        self.memory_manager = memory_manager
         self.state_manager_factory = state_manager_factory
-        self.completed = completed  # optional: 완료 이력 저장 시에만 사용
+        self.completed = completed
 
     def get(self, agent_name: str):
-        return self.executors[agent_name]
+        """Runner를 반환해 호출부에서 runner.run(agent_name, ctx) 사용."""
+        return self.runner
 
-    def run(self, **kwargs) -> Generator[Dict[str, Any], None, None]:
+    def run(self, ctx: ExecutionContext) -> Generator[Dict[str, Any], None, None]:
         raise NotImplementedError

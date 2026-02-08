@@ -1,26 +1,21 @@
 # app/core/api/router_factory.py
-"""오케스트레이터로 FastAPI 라우터 자동 생성. 프로젝트 추가 시 라우터 코드 작성 불필요."""
+"""단일 orchestrate API 진입점. Request/Response 스키마 기준."""
 
 import json
 from typing import Any
 
 from fastapi import APIRouter
-from pydantic import BaseModel
 from sse_starlette.sse import EventSourceResponse
 
-from app.core.events import EventType
-
-
-class AgentChatRequest(BaseModel):
-    session_id: str
-    message: str
+from app.core.api.schemas import OrchestrateRequest, OrchestrateResponse
 
 
 def create_agent_router(orchestrator: Any) -> APIRouter:
     """
-    POST /v1/agent/chat
-    POST /v1/agent/chat/stream
-    GET  /v1/agent/completed
+    단일 오케스트레이션 진입점:
+    - POST /v1/agent/chat      : 비스트리밍, OrchestrateRequest → OrchestrateResponse
+    - POST /v1/agent/chat/stream: 스트리밍 SSE
+    - GET  /v1/agent/completed  : 세션별 완료 이력 (선택)
     """
     router = APIRouter(prefix="/v1/agent", tags=["agent"])
 
@@ -31,16 +26,17 @@ def create_agent_router(orchestrator: Any) -> APIRouter:
                 "data": json.dumps(event.get("payload", {}), ensure_ascii=False),
             }
 
-    @router.post("/chat")
-    async def chat(req: AgentChatRequest):
-        return orchestrator.handle(req.session_id, req.message)
+    @router.post("/chat", response_model=OrchestrateResponse)
+    async def orchestrate(req: OrchestrateRequest) -> OrchestrateResponse:
+        result = orchestrator.handle(req.session_id, req.message)
+        return OrchestrateResponse(**result)
 
     @router.post("/chat/stream")
-    async def chat_stream_post(req: AgentChatRequest):
+    async def orchestrate_stream(req: OrchestrateRequest):
         return EventSourceResponse(_stream_events(req.session_id, req.message))
 
     @router.get("/chat/stream")
-    async def chat_stream(session_id: str, message: str):
+    async def orchestrate_stream_get(session_id: str, message: str):
         return EventSourceResponse(_stream_events(session_id, message))
 
     @router.get("/completed")

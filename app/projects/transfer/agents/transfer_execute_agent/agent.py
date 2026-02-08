@@ -1,9 +1,7 @@
 # app/projects/transfer/agents/transfer_execute_agent/agent.py
-"""실제 이체 실행. RetryableError / FatalExecutionError만 raise."""
-
 from app.core.agents.base_agent import BaseAgent
-from app.core.agents import RetryableError, FatalExecutionError
-from app.projects.transfer.state.models import TransferState
+from app.core.agents.agent_runner import RetryableError, FatalExecutionError
+from app.core.context import ExecutionContext
 from app.projects.transfer.agents.transfer_execute_agent.prompt import get_system_prompt
 
 
@@ -12,7 +10,8 @@ class TransferExecuteAgent(BaseAgent):
     def get_system_prompt(cls) -> str:
         return get_system_prompt()
 
-    def run(self, state: TransferState, **kwargs) -> dict:
+    def run(self, context: ExecutionContext, **kwargs) -> dict:
+        state = context.state
         try:
             _ = state.slots.target
             _ = state.slots.amount

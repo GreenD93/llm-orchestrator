@@ -1,6 +1,5 @@
 """
 최소 manifest: raw_history-only 메모리, BaseState, schema/validator 없음.
-새 프로젝트는 이 파일 복사 후 프로젝트명·경로만 변경하면 됨.
 """
 
 import importlib
@@ -10,7 +9,7 @@ from typing import Any, Dict
 
 import yaml
 
-from app.core.agents import ExecutionAgent, build_executors
+from app.core.agents.registry import build_runner
 from app.core.memory import MemoryManager
 from app.core.events import EventType
 
@@ -38,14 +37,9 @@ def load_manifest(project_module: str = "app.projects.minimal") -> Dict[str, Any
         data = yaml.safe_load(f)
 
     state_manager_class = _resolve_class(data["state"]["manager"], project_module)
-
     from app.projects.minimal.state.stores import SessionStore, CompletedStore
 
-    # summarizer 없음 → raw_history만 관리
-    memory_manager_factory = lambda: MemoryManager()
-
-    # 스키마/검증 없음 (필요 시 프로젝트에서 schema_registry, validator_map 주입)
-    execution_agent_factory = lambda: ExecutionAgent()
+    memory_manager = MemoryManager(enable_memory=True)
 
     agents_config = data.get("agents", {})
     agent_specs = {}
@@ -55,11 +49,9 @@ def load_manifest(project_module: str = "app.projects.minimal") -> Dict[str, Any
             class_path = f"agents.interaction_agent.agent.{class_path}"
         cls = _resolve_class(class_path, project_module)
         card = _load_card(spec["card"])
-        agent_specs[key] = {
-            "class": cls,
-            "card": card,
-            "stream": spec.get("stream", False),
-        }
+        agent_specs[key] = {"class": cls, "card": card, "stream": spec.get("stream", False)}
+
+    runner = build_runner(agent_specs)
 
     router_class = _resolve_class(data["flows"]["router"], project_module)
     handlers_config = data["flows"]["handlers"]
@@ -67,9 +59,6 @@ def load_manifest(project_module: str = "app.projects.minimal") -> Dict[str, Any
         flow_key: _resolve_class(handler_path, project_module)
         for flow_key, handler_path in handlers_config.items()
     }
-
-    def executors_factory(execution_agent, agent_specs):
-        return build_executors(execution_agent, agent_specs)
 
     def on_error(e: Exception):
         return {
@@ -81,15 +70,17 @@ def load_manifest(project_module: str = "app.projects.minimal") -> Dict[str, Any
             },
         }
 
+    def after_turn(ctx, payload: dict):
+        memory_manager.update(ctx.memory, ctx.user_message, payload.get("message", ""))
+
     return {
         "sessions_factory": lambda: SessionStore(),
         "completed_factory": lambda: CompletedStore(),
-        "memory_manager_factory": memory_manager_factory,
-        "execution_agent_factory": execution_agent_factory,
-        "executors_factory": executors_factory,
-        "agents": agent_specs,
+        "memory_manager_factory": lambda: memory_manager,
+        "runner": runner,
         "state": {"manager": state_manager_class},
         "flows": {"router": router_class, "handlers": handlers},
         "default_flow": "DEFAULT_FLOW",
         "on_error": on_error,
+        "after_turn": after_turn,
     }

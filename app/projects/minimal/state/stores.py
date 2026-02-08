@@ -29,3 +29,6 @@ class CompletedStore:
 
     def add(self, session_id: str, state: Any, memory_snapshot: Dict[str, Any]) -> None:
         pass
+
+    def list_for_session(self, session_id: str):
+        return []

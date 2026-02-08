@@ -1,14 +1,13 @@
 # app/core/agents/__init__.py
 from app.core.agents.base_agent import BaseAgent
-from app.core.agents.agent_executor import AgentExecutor
-from app.core.agents.execution_agent import ExecutionAgent, FatalExecutionError, RetryableError
-from app.core.agents.registry import build_executors
+from app.core.agents.agent_runner import AgentRunner, RetryableError, FatalExecutionError
+from app.core.agents.registry import get_registry, build_runner
 
 __all__ = [
     "BaseAgent",
-    "AgentExecutor",
-    "ExecutionAgent",
+    "AgentRunner",
     "RetryableError",
     "FatalExecutionError",
-    "build_executors",
+    "get_registry",
+    "build_runner",
 ]
