@@ -1,0 +1,28 @@
+name: transfer
+
+agents:
+  intent:
+    class: IntentAgent
+    card: agents/cards/intent.json
+
+  slot:
+    class: SlotFillerAgent
+    card: agents/cards/slot.json
+
+  interaction:
+    class: InteractionAgent
+    card: agents/cards/interaction.json
+    stream: true
+
+  execute:
+    class: TransferExecuteAgent
+    card: agents/cards/execute.json
+
+flows:
+  router: flows.router.TransferFlowRouter
+  handlers:
+    DEFAULT_FLOW: flows.handlers.DefaultFlowHandler
+    TRANSFER_FLOW: flows.handlers.TransferFlowHandler
+
+state:
+  manager: state.state_manager.TransferStateManager

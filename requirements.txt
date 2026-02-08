@@ -3,3 +3,4 @@ uvicorn
 pydantic
 openai
 sse-starlette
+pyyaml

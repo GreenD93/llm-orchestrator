@@ -1,0 +1,1 @@
+{"name":"IntentAgent","role":"intent_classifier","description":"사용자 발화의 의도 분류","llm":{"provider":"openai","model":"gpt-4.1-mini","temperature":0},"policy":{"max_retry":2,"backoff_sec":1,"timeout_sec":6,"validate":"intent_enum","schema":"IntentResult"}}

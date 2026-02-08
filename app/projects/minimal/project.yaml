@@ -1,0 +1,16 @@
+# 최소 템플릿: interaction만 필수, 단일 flow, BaseState
+name: minimal
+
+agents:
+  interaction:
+    class: InteractionAgent
+    card: agents/cards/interaction.json
+    stream: true
+
+flows:
+  router: flows.router.MinimalFlowRouter
+  handlers:
+    DEFAULT_FLOW: flows.handlers.MinimalFlowHandler
+
+state:
+  manager: state.state_manager.MinimalStateManager
