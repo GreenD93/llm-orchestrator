@@ -3,20 +3,20 @@ name: transfer
 agents:
   intent:
     class: IntentAgent
-    card: agents/cards/intent.json
+    card: agents/intent_agent/card.json
 
   slot:
     class: SlotFillerAgent
-    card: agents/cards/slot.json
+    card: agents/slot_filler_agent/card.json
 
   interaction:
     class: InteractionAgent
-    card: agents/cards/interaction.json
+    card: agents/interaction_agent/card.json
     stream: true
 
   execute:
     class: TransferExecuteAgent
-    card: agents/cards/execute.json
+    card: agents/transfer_execute_agent/card.json
 
 flows:
   router: flows.router.TransferFlowRouter

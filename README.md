@@ -52,12 +52,11 @@ app/
         ├── project.yaml        # 프로젝트 정의 (agents, flows, state.manager)
         ├── manifest.py         # YAML → runtime 객체 (CoreOrchestrator에 전달할 dict)
         ├── agents/
-        │   ├── intent_agent/      # agent.py, prompt.py, card는 cards/intent.json
-        │   ├── slot_filler_agent/
-        │   ├── interaction_agent/
-        │   ├── transfer_execute_agent/
-        │   ├── schemas.py
-        │   └── cards/*.json
+        │   ├── intent_agent/      # agent.py, prompt.py, card.json
+        │   ├── slot_filler_agent/  # agent.py, prompt.py, card.json
+        │   ├── interaction_agent/  # agent.py, prompt.py, card.json
+        │   ├── transfer_execute_agent/  # agent.py, prompt.py, card.json
+        │   └── schemas.py
         ├── state/
         │   ├── models.py
         │   ├── state_manager.py

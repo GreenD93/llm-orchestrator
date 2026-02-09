@@ -125,7 +125,7 @@ Agent는 **상태를 직접 바꾸지 말고**, `context`(state, memory, metadat
 
 ### 2.2 Card (선택, 권장)
 
-- **위치**: `app/projects/<프로젝트>/agents/cards/<에이전트_이름>.json`
+- **위치**: `app/projects/<프로젝트>/agents/<에이전트_이름>/card.json`
 - **역할**: LLM 설정(`model`, `temperature`, `timeout_sec`), 재시도/검증 정책(`max_retry`, `validate`, `schema` 등)을 정의합니다.
 - **manifest**에서 이 card를 읽어 `build_runner()`에 넘기므로, 새 Agent를 추가할 때 card도 함께 두면 Runner 정책을 카드만으로 조정하기 쉽습니다.
 
@@ -167,20 +167,20 @@ name: transfer
 agents:
   intent:
     class: IntentAgent
-    card: agents/cards/intent.json
+    card: agents/intent_agent/card.json
 
   slot:
     class: SlotFillerAgent
-    card: agents/cards/slot.json
+    card: agents/slot_filler_agent/card.json
 
   interaction:
     class: InteractionAgent
-    card: agents/cards/interaction.json
+    card: agents/interaction_agent/card.json
     stream: true
 
   execute:
     class: TransferExecuteAgent
-    card: agents/cards/execute.json
+    card: agents/transfer_execute_agent/card.json
 
 flows:
   router: flows.router.TransferFlowRouter
@@ -245,7 +245,7 @@ def run(self, ctx: ExecutionContext) -> Generator[Dict[str, Any], None, None]:
 | 단계 | 위치 | 내용 |
 |------|------|------|
 | 1 | `agents/<이름>/agent.py`, `prompt.py` | Agent 클래스 + `run` / `run_stream`, 프롬프트 |
-| 2 | `agents/cards/<이름>.json` | LLM/정책 설정 (선택) |
+| 2 | `agents/<이름>/card.json` | LLM/정책 설정 (선택) |
 | 3 | `project.yaml` | agents에 새 항목 추가 |
 | 4 | `manifest.py` | 클래스/카드 해석, 필요 시 schema_registry·validator_map |
 | 5 | `flows/handlers.py` | 적절한 flow에서 `runner.run("이름", ctx)` 호출 |
@@ -458,7 +458,7 @@ pytest app/projects/transfer/tests/test_api.py -v
 
 | 하고 싶은 일 | 수정할 곳 |
 |--------------|-----------|
-| 새 Agent 추가 | `agents/<이름>/agent.py`, `prompt.py`, `cards/<이름>.json`, `project.yaml`, `manifest.py`, `flows/handlers.py` |
+| 새 Agent 추가 | `agents/<이름>/agent.py`, `prompt.py`, `agents/<이름>/card.json`, `project.yaml`, `manifest.py`, `flows/handlers.py` |
 | flow 추가 (새 시나리오) | `flows/router.py` (route 반환값), `flows/handlers.py` (새 Handler 클래스), `project.yaml` (flows.handlers에 등록), `manifest.py` (이미 handlers 로딩하면 추가만) |
 | 턴 끝 처리 (메모리/요약 등) | manifest의 `after_turn` 훅 |
 | 에러 시 공통 응답 | manifest의 `on_error` 훅 |

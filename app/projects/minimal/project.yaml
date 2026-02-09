@@ -4,7 +4,7 @@ name: minimal
 agents:
   interaction:
     class: InteractionAgent
-    card: agents/cards/interaction.json
+    card: agents/interaction_agent/card.json
     stream: true
 
 flows:
