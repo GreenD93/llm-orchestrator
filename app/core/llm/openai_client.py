@@ -1,6 +1,4 @@
 # app/core/llm/openai_client.py
-from typing import Optional
-
 from openai import OpenAI
 from app.core.config import settings
 
@@ -9,13 +7,8 @@ class OpenAIClient:
     def __init__(self):
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
 
-    def chat(self, *, model, temperature, messages, timeout: int | None = None, tools: Optional[list] = None):
-        kwargs = dict(
-            model=model,
-            messages=messages,
-            temperature=temperature,
-            timeout=timeout,
-        )
+    def chat(self, *, model, temperature, messages, timeout: int | None = None, tools: list | None = None):
+        kwargs = dict(model=model, messages=messages, temperature=temperature, timeout=timeout)
         if tools:
             kwargs["tools"] = tools
         return self.client.chat.completions.create(**kwargs)

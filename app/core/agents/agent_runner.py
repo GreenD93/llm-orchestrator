@@ -3,7 +3,7 @@
 
 import time
 import traceback
-from typing import Any, Dict, Generator, Optional
+from typing import Any, Callable, Dict, Generator, Optional
 
 from pydantic import ValidationError
 
@@ -22,24 +22,36 @@ class FatalExecutionError(Exception):
 class AgentRunner:
     """
     Registry(name -> Agent 인스턴스) + 실행 정책(재시도, 스키마, 타임아웃).
-    정책은 agent.policy, 스키마는 agent.output_type에서 직접 읽음.
+    Agent는 run(context) -> dict 또는 run_stream(context) -> Generator만 제공.
     """
 
-    def __init__(self, agents: Dict[str, Any]):
+    def __init__(
+        self,
+        agents: Dict[str, Any],  # name -> agent instance
+        schema_registry: Optional[Dict[str, Any]] = None,
+        validator_map: Optional[Dict[str, Callable]] = None,
+        policy_by_name: Optional[Dict[str, Dict[str, Any]]] = None,
+    ):
         self._agents = agents
+        self._schema_registry = schema_registry or {}
+        self._validator_map = validator_map or {}
+        self._policy = policy_by_name or {}  # name -> { schema, validate, max_retry, backoff_sec, timeout_sec }
         self.logger = setup_logger("AgentRunner")
+
+    def has_agent(self, name: str) -> bool:
+        return name in self._agents
 
     def run(self, agent_name: str, context: ExecutionContext, **kwargs) -> Any:
         agent = self._agents.get(agent_name)
         if agent is None:
             raise ValueError(f"Unknown agent: {agent_name}")
-
-        policy = getattr(agent, "policy", None)
-        max_retry = getattr(policy, "max_retry", 1) if policy else 1
-        backoff_sec = getattr(policy, "backoff_sec", 1) if policy else 1
-        timeout_sec = getattr(policy, "timeout_sec", None) if policy else None
-        validator = getattr(policy, "validator", None) if policy else None
-        output_type = getattr(agent, "output_type", None)
+        policy = self._policy.get(agent_name, {})
+        schema = policy.get("schema")
+        validate_key = policy.get("validate")
+        validator = self._validator_map.get(validate_key) if validate_key else None
+        max_retry = policy.get("max_retry", 1)
+        backoff_sec = policy.get("backoff_sec", 1)
+        timeout_sec = policy.get("timeout_sec")
 
         for attempt in range(1, max_retry + 1):
             started = time.monotonic()
@@ -50,23 +62,24 @@ class AgentRunner:
                     raise RetryableError(f"timeout_exceeded: {elapsed:.2f}s > {timeout_sec}s")
                 if validator and not validator(result):
                     raise RetryableError("validation_failed")
-                if output_type is not None:
-                    parsed = output_type.model_validate(result)
+                if schema and schema in self._schema_registry:
+                    model = self._schema_registry[schema]
+                    parsed = model.model_validate(result)
                     return parsed.model_dump()
                 return result
             except (RetryableError, ValidationError) as e:
                 self.logger.warning(f"[{agent_name}] retry {attempt}/{max_retry}: {e}")
                 if attempt >= max_retry:
-                    context.metadata.setdefault("execution", {"agent": agent_name, "error": str(e), "attempt": attempt})
+                    context.metadata["execution"] = {"agent": agent_name, "error": str(e), "attempt": attempt}
                     raise
                 time.sleep(backoff_sec * attempt)
             except Exception as e:
                 self.logger.error(f"[{agent_name}] fatal: {e}")
-                context.metadata.setdefault("execution", {
+                context.metadata["execution"] = {
                     "agent": agent_name,
                     "error": str(e),
                     "traceback": traceback.format_exc(),
-                })
+                }
                 raise FatalExecutionError(str(e))
 
     def run_stream(
@@ -83,10 +96,8 @@ class AgentRunner:
             result = self.run(agent_name, context, **kwargs)
             yield {"event": "LLM_DONE", "payload": result}
             return
-
-        policy = getattr(agent, "policy", None)
-        if timeout_sec is None:
-            timeout_sec = getattr(policy, "timeout_sec", None) if policy else None
+        policy = self._policy.get(agent_name, {})
+        timeout_sec = timeout_sec or policy.get("timeout_sec")
         started = time.monotonic()
         try:
             for event in agent.run_stream(context, **kwargs):
@@ -95,9 +106,9 @@ class AgentRunner:
                 yield event
         except Exception as e:
             self.logger.error(f"[{agent_name}] stream failed: {e}")
-            context.metadata.setdefault("execution", {
+            context.metadata["execution"] = {
                 "agent": agent_name,
                 "error": str(e),
                 "traceback": traceback.format_exc(),
-            })
+            }
             raise

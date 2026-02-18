@@ -4,22 +4,20 @@
 import json
 from typing import Any
 
-from fastapi import APIRouter
-from sse_starlette.sse import EventSourceResponse
+from fastapi import APIRouter, HTTPException
 
 from app.core.api.schemas import OrchestrateRequest, OrchestrateResponse
+from app.core.config import settings
+from sse_starlette.sse import EventSourceResponse
 
 
 def create_agent_router(orchestrator: Any) -> APIRouter:
     """
-    오케스트레이션 진입점:
+    단일 오케스트레이션 진입점:
     - POST /v1/agent/chat         : 비스트리밍
     - POST /v1/agent/chat/stream  : 스트리밍 SSE
-    - GET  /v1/agent/chat/stream  : 스트리밍 SSE (GET)
-    - GET  /v1/agent/health       : 헬스 체크
-    - GET  /v1/agent/agents       : A2A 호환 Agent Card 목록
     - GET  /v1/agent/completed    : 세션별 완료 이력
-    - DELETE /v1/agent/session/{session_id} : 세션 리셋
+    - GET  /v1/agent/debug/{id}   : 개발용 내부 상태 스냅샷 (DEV_MODE=true 시만)
     """
     router = APIRouter(prefix="/v1/agent", tags=["agent"])
 
@@ -29,22 +27,6 @@ def create_agent_router(orchestrator: Any) -> APIRouter:
                 "event": event.get("event", ""),
                 "data": json.dumps(event.get("payload", {}), ensure_ascii=False),
             }
-
-    @router.get("/health")
-    async def health():
-        agents = list(orchestrator._runner._agents.keys())
-        flows = list(orchestrator._flow_handlers.keys())
-        return {"status": "ok", "agents": agents, "flows": flows}
-
-    @router.get("/agents")
-    async def list_agents():
-        cards = []
-        for agent in orchestrator._runner._agents.values():
-            if hasattr(agent, "to_agent_card"):
-                cards.append(agent.to_agent_card())
-            else:
-                cards.append({"name": agent.__class__.__name__})
-        return {"agents": cards}
 
     @router.post("/chat", response_model=OrchestrateResponse)
     async def orchestrate(req: OrchestrateRequest) -> OrchestrateResponse:
@@ -66,14 +48,35 @@ def create_agent_router(orchestrator: Any) -> APIRouter:
             "completed": orchestrator.completed.list_for_session(session_id),
         }
 
-    @router.delete("/session/{session_id}")
-    async def reset_session(session_id: str):
-        if hasattr(orchestrator.sessions, "reset_full"):
-            orchestrator.sessions.reset_full(session_id)
-        else:
-            # Fallback: get_or_create로 새 상태 생성 후 저장
-            state, memory = orchestrator.sessions.get_or_create(session_id)
-            orchestrator.sessions.save_state(session_id, state.__class__())
-        return {"status": "ok", "session_id": session_id}
+    if settings.DEV_MODE:
+        @router.get("/debug/{session_id}")
+        async def debug_session(session_id: str):
+            """
+            개발용 세션 내부 상태 스냅샷.
+            DEV_MODE=true 일 때만 등록됨 (.env에서 DEV_MODE=false로 비활성화).
+
+            반환:
+              state      - 현재 stage, slots, task_queue, meta 등 전체 state
+              memory     - raw_history(대화 이력), summary_text(요약)
+              completed  - 이 세션에서 완료된 이체 목록
+            """
+            sessions = getattr(orchestrator, "sessions", None)
+            if sessions is None:
+                raise HTTPException(status_code=501, detail="sessions not available on this orchestrator")
+
+            state, memory = sessions.get_or_create(session_id)
+            completed = orchestrator.completed.list_for_session(session_id)
+
+            return {
+                "session_id": session_id,
+                "state": state.model_dump() if hasattr(state, "model_dump") else state,
+                "memory": {
+                    "summary_text": memory.get("summary_text", ""),
+                    "summary_struct": memory.get("summary_struct", {}),
+                    "raw_history": memory.get("raw_history", []),
+                    "raw_history_turns": len(memory.get("raw_history", [])) // 2,
+                },
+                "completed": completed,
+            }
 
     return router

@@ -2,7 +2,6 @@ name: transfer
 
 agents:
   intent:
-<<<<<<< HEAD
     class: IntentAgent
     card: agents/intent_agent/card.json
 
@@ -13,21 +12,11 @@ agents:
   interaction:
     class: InteractionAgent
     card: agents/interaction_agent/card.json
-=======
-    class: agents.intent_agent.agent.IntentAgent
-  slot:
-    class: agents.slot_filler_agent.agent.SlotFillerAgent
-  interaction:
-    class: agents.interaction_agent.agent.InteractionAgent
->>>>>>> 54bcbbf (claude ver1.)
     stream: true
+
   execute:
-<<<<<<< HEAD
     class: TransferExecuteAgent
     card: agents/transfer_execute_agent/card.json
-=======
-    class: agents.transfer_execute_agent.agent.TransferExecuteAgent
->>>>>>> 54bcbbf (claude ver1.)
 
 flows:
   router: flows.router.TransferFlowRouter

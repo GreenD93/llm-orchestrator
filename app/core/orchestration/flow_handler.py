@@ -8,8 +8,8 @@ from app.core.context import ExecutionContext
 
 class BaseFlowHandler:
     """
-    runner 한 개로 Agent 실행. 업무 순서만 정의.
-    메모리 갱신은 flow_utils.update_memory 사용, 상태 저장은 Orchestrator finally에서 수행.
+    executors 대신 runner 한 개. get(agent_name)으로 Runner.run(agent_name, ctx) 호출.
+    업무 순서만 정의하고, 세션/메모리 저장은 필요 시 flow_utils.update_memory_and_save 사용.
     """
 
     def __init__(

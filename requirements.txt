@@ -1,6 +1,13 @@
+# back-end
 fastapi
 uvicorn
 pydantic
 openai
 sse-starlette
 pyyaml
+python-dotenv
+
+# front-end
+streamlit>=1.32.0
+requests>=2.31.0
+sseclient-py>=1.8.0

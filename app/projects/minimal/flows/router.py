@@ -1,8 +1,9 @@
-"""단일 flow만 있으므로 항상 DEFAULT_FLOW 반환."""
-
+# app/projects/minimal/flows/router.py
 from app.core.orchestration import BaseFlowRouter
 
 
 class MinimalFlowRouter(BaseFlowRouter):
-    def route(self, *, intent: str, state) -> str:
+    """모든 요청을 DEFAULT_FLOW로 라우팅. IntentAgent 없음."""
+
+    def route(self, *, intent_result: dict, state) -> str:
         return "DEFAULT_FLOW"

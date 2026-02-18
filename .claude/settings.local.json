@@ -1,13 +1,22 @@
 {
   "permissions": {
     "allow": [
-      "WebSearch",
-      "WebFetch(domain:github.com)",
-      "WebFetch(domain:google.github.io)",
-      "WebFetch(domain:openai.github.io)",
-      "WebFetch(domain:docs.langchain.com)",
-      "Bash(python -m pytest:*)",
-      "Bash(python:*)"
+      "Bash(pip show:*)",
+      "Bash(pip install:*)",
+      "Bash(pip3 install:*)",
+      "Bash(python3:*)",
+      "Bash(micromamba --version:*)",
+      "Bash(source:*)",
+      "Bash(micromamba env list:*)",
+      "Bash(zsh -i -c \"micromamba env list\")",
+      "Bash(zsh -i -c \"micromamba install -n base -c conda-forge streamlit requests -y\")",
+      "Bash(zsh -i -c \"micromamba run -n base pip install sseclient-py\")",
+      "Bash(zsh -i -c \"micromamba activate base && python -m pip install sseclient-py streamlit requests\")",
+      "Bash(zsh -i -c \"micromamba activate base && which python3 && python3 -m pip install sseclient-py streamlit requests\")",
+      "Bash(chmod:*)",
+      "Bash(micromamba run -n transfer python -m pytest:*)",
+      "Bash(/Users/yg93_jo/micromamba/envs/transfer/bin/python -m pytest app/projects/transfer/tests/ -q)",
+      "Bash(python -c:*)"
     ]
   }
 }

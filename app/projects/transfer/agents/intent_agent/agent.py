@@ -1,36 +1,25 @@
 # app/projects/transfer/agents/intent_agent/agent.py
-from app.core.agents.base_agent import BaseAgent, AgentPolicy
+from app.core.agents.base_agent import BaseAgent
 from app.core.agents.agent_runner import RetryableError
 from app.core.context import ExecutionContext
-from app.projects.transfer.agents.schemas import IntentResult
 from app.projects.transfer.agents.intent_agent.prompt import get_system_prompt
 
 
 class IntentAgent(BaseAgent):
-    name = "intent"
-    description = "사용자 발화의 의도 분류"
-    output_type = IntentResult
-    default_model = "gpt-4.1-mini"
-    default_temperature = 0.0
-    policy = AgentPolicy(
-        max_retry=2,
-        backoff_sec=1,
-        timeout_sec=6,
-        validator=lambda v: (
-            isinstance(v, dict)
-            and v.get("intent") in ("TRANSFER", "OTHER")
-            and "supported" in v
-        ),
-    )
+    output_schema = "IntentResult"
+
+    # 이 프로젝트에서 분류 가능한 시나리오 목록
+    # 새 서비스 추가 시: 여기에 값 추가 + prompt.py 분류 기준 추가 + SCENARIO_TO_FLOW 등록
+    KNOWN_SCENARIOS = {"TRANSFER", "GENERAL"}
 
     @classmethod
     def get_system_prompt(cls) -> str:
         return get_system_prompt()
 
     def run(self, context: ExecutionContext, **kwargs) -> dict:
-        raw = self.chat([{"role": "user", "content": context.user_message}])
-        value = raw.strip().upper()
-        if value not in ("TRANSFER", "OTHER"):
-            raise RetryableError(f"invalid_intent_output: {raw}")
-        supported = value == "TRANSFER"
-        return {"intent": value, "supported": supported, "reason": None}
+        context_block = f"현재 이체 stage: {context.state.stage}"
+        messages = context.build_messages(context_block)
+        raw = self.chat(messages).strip().upper()
+        if raw not in self.KNOWN_SCENARIOS:
+            raise RetryableError(f"unknown_scenario: {raw}")
+        return {"scenario": raw, "reason": None}

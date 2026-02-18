@@ -1,20 +1,21 @@
-# 최소 템플릿: interaction만 필수, 단일 flow, BaseState
+# app/projects/minimal/project.yaml
+# ── 새 프로젝트 시작점 ────────────────────────────────────────────────────────
+# 1. 이 파일을 복사해서 새 프로젝트 디렉터리를 만든다.
+# 2. agents/chat_agent/prompt.py 에서 서비스 역할을 정의한다.
+# 3. 복잡한 상태 머신이 필요하면 transfer 프로젝트를 참고한다.
+
 name: minimal
 
 agents:
-  interaction:
-<<<<<<< HEAD
-    class: InteractionAgent
-    card: agents/interaction_agent/card.json
-=======
-    class: agents.interaction_agent.agent.InteractionAgent
->>>>>>> 54bcbbf (claude ver1.)
+  chat:
+    class: ChatAgent                        # class_name_map에서 전체 경로로 변환
+    card: agents/chat_agent/card.json
     stream: true
 
 flows:
   router: flows.router.MinimalFlowRouter
   handlers:
-    DEFAULT_FLOW: flows.handlers.MinimalFlowHandler
+    DEFAULT_FLOW: flows.handlers.ChatFlowHandler
 
 state:
-  manager: state.state_manager.MinimalStateManager
+  manager: state.models.MinimalStateManager

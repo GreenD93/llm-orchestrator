@@ -58,25 +58,49 @@ class TransferStateManager(BaseStateManager):
         if op_type == "confirm":
             self.state.stage = Stage.CONFIRMED
             return
+
         slot = op.get("slot")
         if slot not in SLOT_SCHEMA:
             self.state.meta.setdefault("invalid_ops", []).append(op)
             return
-        meta = SLOT_SCHEMA[slot]
-        slot_type = meta["type"]
-        format_spec = meta.get("format")
+
+        schema = SLOT_SCHEMA[slot]
+        slot_type = schema["type"]
+        format_spec = schema.get("format")
+        validator = schema.get("validate")
+        error_msg = schema.get("error_msg", f"{slot} 값이 올바르지 않아요.")
+
         if op_type == "set":
+            # 1. 타입 캐스팅
             casted = self._cast(op.get("value"), slot_type)
             if casted is None:
                 self.state.meta.setdefault("cast_fail_ops", []).append(op)
+                self._set_slot_error(slot, error_msg)
                 return
+
+            # 2. 포맷 정규화 (날짜 등)
             normalized = _normalize_format(casted, format_spec)
             if normalized is None:
                 self.state.meta.setdefault("format_fail_ops", []).append(op)
+                self._set_slot_error(slot, error_msg)
                 return
+
+            # 3. 비즈니스 룰 검증
+            if validator and not validator(normalized):
+                self.state.meta.setdefault("validation_fail_ops", []).append(op)
+                self._set_slot_error(slot, error_msg)
+                return
+
+            # 검증 통과 → 슬롯 저장 및 이전 오류 제거
             setattr(self.state.slots, slot, normalized)
+            self.state.meta.get("slot_errors", {}).pop(slot, None)
+
         elif op_type == "clear":
             setattr(self.state.slots, slot, None)
+            self.state.meta.get("slot_errors", {}).pop(slot, None)
+
+    def _set_slot_error(self, slot: str, msg: str) -> None:
+        self.state.meta.setdefault("slot_errors", {})[slot] = msg
 
     def _validate_required(self) -> None:
         self.state.missing_required = [
@@ -85,8 +109,6 @@ class TransferStateManager(BaseStateManager):
 
     def _transition(self) -> None:
         if self.state.stage in TERMINAL_STAGES:
-            return
-        if self.state.stage == Stage.AWAITING_CONTINUE_DECISION:
             return
         if self.state.filling_turns > MAX_FILL_TURNS:
             self.state.stage = Stage.UNSUPPORTED

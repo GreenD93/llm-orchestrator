@@ -1,0 +1,11 @@
+{
+  "llm": {
+    "model": "gpt-4.1-mini",
+    "temperature": 0.3
+  },
+  "policy": {
+    "max_retry": 1,
+    "timeout_sec": 30
+  },
+  "tools": []
+}

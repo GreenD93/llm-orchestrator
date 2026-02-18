@@ -1,1 +1,9 @@
-{"name":"TransferExecuteAgent","role":"execute","description":"이체 실행","policy":{"max_retry":2,"backoff_sec":1}}
+{
+  "name": "TransferExecuteAgent",
+  "role": "execute",
+  "description": "이체 실행",
+  "policy": {
+    "max_retry": 2,
+    "backoff_sec": 1
+  }
+}
