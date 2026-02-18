@@ -53,6 +53,9 @@ def load_manifest() -> Dict[str, Any]:
         "state":                  {"manager": state_manager_class},
         "flows":                  {"router": router_class, "handlers": handlers},
         "default_flow":           "DEFAULT_FLOW",
-        "on_error":               lambda e: make_error_event(),
+        "on_error":               lambda e: make_error_event(e),
         "after_turn":             None,
+        # 서버 사이드 훅: {hook_type: fn(ctx, data)}
+        # Handler가 DONE payload에 hooks: [{type, data}]를 추가하면 여기서 실행된다.
+        "hook_handlers":          {},
     }

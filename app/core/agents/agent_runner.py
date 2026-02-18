@@ -41,7 +41,18 @@ class AgentRunner:
     def has_agent(self, name: str) -> bool:
         return name in self._agents
 
-    def run(self, agent_name: str, context: ExecutionContext, **kwargs) -> Any:
+    def run(
+        self,
+        agent_name: str,
+        context: ExecutionContext,
+        *,
+        on_retry: Optional[Callable[[str, int, int, str], None]] = None,
+        **kwargs,
+    ) -> Any:
+        """
+        on_retry: retry 발생 시 호출되는 콜백 (agent_name, attempt, max_retry, error_msg).
+                  orchestrator가 이 콜백을 통해 "재시도 중" 이벤트를 수집할 수 있다.
+        """
         agent = self._agents.get(agent_name)
         if agent is None:
             raise ValueError(f"Unknown agent: {agent_name}")
@@ -58,22 +69,30 @@ class AgentRunner:
             try:
                 result = agent.run(context, **kwargs)
                 elapsed = time.monotonic() - started
+
                 if timeout_sec and elapsed > timeout_sec:
                     raise RetryableError(f"timeout_exceeded: {elapsed:.2f}s > {timeout_sec}s")
                 if validator and not validator(result):
                     raise RetryableError("validation_failed")
+
+                # 스키마 등록된 경우 Pydantic 검증 후 dict 반환
                 if schema and schema in self._schema_registry:
                     model = self._schema_registry[schema]
-                    parsed = model.model_validate(result)
-                    return parsed.model_dump()
+                    return model.model_validate(result).model_dump()
                 return result
+
             except (RetryableError, ValidationError) as e:
+                # 재시도 가능한 오류 — max_retry 소진 시 그대로 raise
                 self.logger.warning(f"[{agent_name}] retry {attempt}/{max_retry}: {e}")
                 if attempt >= max_retry:
                     context.metadata["execution"] = {"agent": agent_name, "error": str(e), "attempt": attempt}
                     raise
+                if on_retry:
+                    on_retry(agent_name, attempt, max_retry, str(e))
                 time.sleep(backoff_sec * attempt)
+
             except Exception as e:
+                # 예상치 못한 오류 — 재시도 없이 FatalExecutionError로 래핑
                 self.logger.error(f"[{agent_name}] fatal: {e}")
                 context.metadata["execution"] = {
                     "agent": agent_name,
@@ -92,10 +111,13 @@ class AgentRunner:
         agent = self._agents.get(agent_name)
         if agent is None:
             raise ValueError(f"Unknown agent: {agent_name}")
+
+        # supports_stream=False인 경우 run()으로 폴백 후 단일 LLM_DONE 이벤트 emit
         if not getattr(agent, "supports_stream", False):
             result = self.run(agent_name, context, **kwargs)
             yield {"event": "LLM_DONE", "payload": result}
             return
+
         policy = self._policy.get(agent_name, {})
         timeout_sec = timeout_sec or policy.get("timeout_sec")
         started = time.monotonic()

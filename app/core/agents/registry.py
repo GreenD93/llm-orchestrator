@@ -1,16 +1,10 @@
 # app/core/agents/registry.py
 """문자열 → Agent 클래스 매핑. Runner 빌드는 build_runner에서 수행."""
 
-from typing import Any, Dict, Optional, Type
+from typing import Any, Dict, Optional
 
 from app.core.agents.agent_runner import AgentRunner
-from app.core.agents.base_agent import BaseAgent
 from app.core.tools.registry import build_tools
-
-
-def get_registry(agent_specs: Dict[str, Dict[str, Any]]) -> Dict[str, Type[BaseAgent]]:
-    """agent_specs에서 name -> Agent 클래스만 추출."""
-    return {key: spec["class"] for key, spec in agent_specs.items()}
 
 
 def build_runner(

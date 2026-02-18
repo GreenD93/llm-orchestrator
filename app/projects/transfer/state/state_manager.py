@@ -38,7 +38,18 @@ class TransferStateManager(BaseStateManager):
 
     def apply(self, delta: Dict[str, Any]) -> TransferState:
         if "_meta" in delta:
-            self.state.meta.setdefault("slot_meta", []).append(delta["_meta"])
+            meta = delta["_meta"]
+            self.state.meta.setdefault("slot_meta", []).append(meta)
+            if meta.get("parse_error") and self.state.stage in (Stage.INIT, Stage.FILLING):
+                # SlotFiller가 LLM 응답을 JSON으로 파싱하지 못함.
+                # → InteractionAgent가 "이해하지 못했어요" 안내를 하도록 slot_errors에 신호.
+                self.state.meta.setdefault("slot_errors", {})["_unclear"] = (
+                    "입력 내용을 이해하지 못했어요."
+                )
+        else:
+            # 정상 파싱 성공 시 이전 불명확 오류 제거
+            self.state.meta.get("slot_errors", {}).pop("_unclear", None)
+
         if self.state.stage == Stage.FILLING:
             self.state.filling_turns += 1
         for op in delta.get("operations", []):
@@ -56,7 +67,11 @@ class TransferStateManager(BaseStateManager):
             self.state.stage = Stage.FILLING if self.state.has_any_slot() else Stage.INIT
             return
         if op_type == "confirm":
-            self.state.stage = Stage.CONFIRMED
+            # 안전 제약: CONFIRMED는 반드시 READY → CONFIRMED 경로만 허용.
+            # INIT·FILLING 단계에서 LLM이 confirm을 반환해도 무시한다.
+            # (예: "보내줘" 발화에서 LLM이 confirm을 포함하더라도 READY 확인 단계를 건너뛸 수 없음)
+            if self.state.stage == Stage.READY:
+                self.state.stage = Stage.CONFIRMED
             return
 
         slot = op.get("slot")
@@ -108,6 +123,14 @@ class TransferStateManager(BaseStateManager):
         ]
 
     def _transition(self) -> None:
+        """슬롯 상태와 현재 stage를 보고 다음 stage를 결정한다.
+
+        흐름:
+          TERMINAL/CONFIRMED → 전이 없음 (ops에서 이미 결정됨)
+          filling_turns 초과  → UNSUPPORTED
+          INIT + 슬롯 입력됨  → FILLING
+          필수 슬롯 완전      → READY  (CONFIRMED는 _apply_op에서만 설정되므로 여기선 건드리지 않음)
+        """
         if self.state.stage in TERMINAL_STAGES:
             return
         if self.state.filling_turns > MAX_FILL_TURNS:
@@ -115,6 +138,8 @@ class TransferStateManager(BaseStateManager):
             return
         if self.state.stage == Stage.INIT and self.state.has_any_slot():
             self.state.stage = Stage.FILLING
+        # CONFIRMED는 반드시 READY 단계에서만 _apply_op("confirm")으로 진입.
+        # 여기서 override하면 READY 단계를 건너뛰는 버그 발생.
         if self.state.stage != Stage.CONFIRMED and not self.state.missing_required:
             self.state.stage = Stage.READY
 

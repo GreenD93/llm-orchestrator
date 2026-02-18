@@ -140,16 +140,25 @@ def render_agent_logs(logs: list):
     parts = []
     for log in logs:
         agent = log.get("agent", "")
-        label = AGENT_LABELS.get(agent, log.get("label", agent))
+        label = log.get("label") or AGENT_LABELS.get(agent, agent)
         result = log.get("result", "")
         status = log.get("status", "running")
+        retry_count = log.get("retry_count", 0)
+
         icon, css = (
             ("⏳", "agent-running") if status == "running" else
             ("✅", "agent-done")    if status == "done"    else
             ("❌", "agent-error")
         )
+
+        # 재시도 배지
+        retry_badge = (
+            f"<span style='font-size:11px;color:#FF8F00;margin-left:6px'>"
+            f"↺ 재시도 {retry_count}회</span>"
+            if retry_count > 0 else ""
+        )
         extra = f"<span class='agent-result'>({result})</span>" if result else ""
-        parts.append(f'<div class="agent-item {css}">{icon} {label}{extra}</div>')
+        parts.append(f'<div class="agent-item {css}">{icon} {label}{retry_badge}{extra}</div>')
     st.markdown("\n".join(parts), unsafe_allow_html=True)
 
 
@@ -305,12 +314,19 @@ def render_memory_debug(debug_data: dict):
 
     memory = debug_data.get("memory", {})
     state  = debug_data.get("state", {})
+    meta   = state.get("meta", {})
 
     turns   = memory.get("raw_history_turns", 0)
     summary = memory.get("summary_text", "")
     st.markdown(f"**대화 턴:** {turns}턴 누적")
     if summary:
         st.markdown(f"**요약:**\n> {summary}")
+
+    # 에이전트 실행 오류 정보
+    exec_err = meta.get("execution") or meta.get("slot_errors")
+    if exec_err:
+        st.markdown("**⚠️ 마지막 실행 오류:**")
+        st.json(exec_err)
 
     with st.expander("state JSON", expanded=False):
         st.json(state)
@@ -467,24 +483,29 @@ with chat_col:
                 # ── AGENT_START ──────────────────────────────────────────────
                 if event_type == "AGENT_START":
                     agent_name = data.get("agent", "")
-                    agent_logs = [l for l in agent_logs if l["agent"] != agent_name]
-                    agent_logs.append({
-                        "agent": agent_name,
-                        "label": data.get("label", ""),
-                        "status": "running",
-                    })
+                    new_label  = data.get("label", "")
+                    # 이미 로그가 있으면 라벨만 업데이트 (재시도 중 라벨 갱신)
+                    existing = next((l for l in agent_logs if l["agent"] == agent_name), None)
+                    if existing:
+                        existing["label"]  = new_label
+                        existing["status"] = "running"
+                    else:
+                        agent_logs.append({"agent": agent_name, "label": new_label, "status": "running"})
                     with agent_progress_ph:
                         render_agent_logs(agent_logs)
 
                 # ── AGENT_DONE ───────────────────────────────────────────────
                 elif event_type == "AGENT_DONE":
-                    agent_name = data.get("agent", "")
-                    success    = data.get("success", True)
+                    agent_name  = data.get("agent", "")
+                    success     = data.get("success", True)
+                    retry_count = data.get("retry_count", 0)
                     for log in agent_logs:
                         if log["agent"] == agent_name:
                             log["status"] = "done" if success else "error"
                             if data.get("result"):
                                 log["result"] = str(data["result"])
+                            if retry_count:
+                                log["retry_count"] = retry_count
                     with agent_progress_ph:
                         render_agent_logs(agent_logs)
 
@@ -533,10 +554,16 @@ with chat_col:
                     with batch_queue_ph:
                         render_batch_queue(batch_tasks)
 
-        except (ConnectionError, TimeoutError, RuntimeError) as e:
+        except Exception as e:
             error_msg = f"❌ {e}"
             response_ph.markdown(error_msg)
             final_message = error_msg
+            # 에러 발생 시 에이전트 로그에서 running 상태인 항목을 error로 전환
+            for log in agent_logs:
+                if log.get("status") == "running":
+                    log["status"] = "error"
+            with agent_progress_ph:
+                render_agent_logs(agent_logs)
 
         # ── 상태 저장 + 완료 거래 / 메모리 갱신 ──────────────────────────────
         st.session_state.messages.append({"role": "user", "content": user_msg})

@@ -76,8 +76,8 @@ def build_ready_message(state) -> str:
     else:
         line = f"{target}에게 {amount_str}을(를) 이체할까요?"
 
-    # 선택적 슬롯 안내 (메모·날짜 미입력 시 한 번만)
-    if not slots.memo and not slots.transfer_date:
+    # 선택적 슬롯 안내 (메모·날짜 미입력 시, 단건일 때만 — 배치는 첫 발화에 이미 지정)
+    if not slots.memo and not slots.transfer_date and batch_total == 1:
         line += "\n메모나 이체 날짜를 추가하시겠어요? 없으시면 바로 진행할게요."
 
     return line

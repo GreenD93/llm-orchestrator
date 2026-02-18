@@ -6,6 +6,7 @@ from app.core.events import EventType
 from app.core.orchestration import BaseFlowHandler, update_memory_and_save
 from app.core.agents.agent_runner import RetryableError, FatalExecutionError
 from app.projects.transfer.state.models import Stage, TransferState, Slots, REQUIRED_SLOTS
+from app.projects.transfer.logic import is_confirm, is_cancel
 from app.projects.transfer.messages import (
     UNSUPPORTED_MESSAGE,
     TERMINAL_MESSAGES,
@@ -72,21 +73,8 @@ class DefaultFlowHandler(BaseFlowHandler):
     """
 
     def run(self, ctx: ExecutionContext) -> Generator[Dict[str, Any], None, None]:
-        yield {"event": EventType.AGENT_START, "payload": {"agent": "interaction", "label": "응답 생성 중"}}
-        payload = None
-        for ev in self.runner.run_stream("interaction", ctx):
-            yield ev
-            if ev.get("event") == EventType.LLM_DONE:
-                payload = ev.get("payload")
-        yield {"event": EventType.AGENT_DONE, "payload": {"agent": "interaction", "label": "응답 완료", "success": True}}
-
-        if payload:
-            update_memory_and_save(
-                self.memory_manager, self.sessions,
-                ctx.session_id, ctx.state, ctx.memory,
-                ctx.user_message, payload.get("message", ""),
-            )
-        yield {"event": EventType.DONE, "payload": _yield_done(ctx, payload or {})}
+        yield from self._stream_agent_turn(ctx, "interaction", "응답 생성 중",
+                                           done_transform=_apply_ui_policy)
 
 
 class TransferFlowHandler(BaseFlowHandler):
@@ -106,9 +94,30 @@ class TransferFlowHandler(BaseFlowHandler):
     """
 
     def run(self, ctx: ExecutionContext) -> Generator[Dict[str, Any], None, None]:
-        # ── 1. Slot Filler ────────────────────────────────────────────────────
+        # ── 1. Slot Filler (또는 코드 레벨 분류) ─────────────────────────────
+        #
+        # LLM 호출 없이 처리하는 경우:
+        #   a) READY + 확인 키워드  → confirm delta
+        #   b) READY + 취소 키워드  → cancel_flow delta
+        #   c) READY + 불명확       → operations:[] → READY 유지 → 재확인 (안전 기본값)
+        #   d) FILLING/INIT + 명시적 취소 키워드 → cancel_flow delta
+        #
         yield {"event": EventType.AGENT_START, "payload": {"agent": "slot", "label": "정보 추출 중"}}
-        delta = self.runner.run("slot", ctx)
+
+        if ctx.state.stage == Stage.READY:
+            if is_confirm(ctx.user_message):
+                delta = {"operations": [{"op": "confirm"}]}
+            elif is_cancel(ctx.user_message):
+                delta = {"operations": [{"op": "cancel_flow"}]}
+            else:
+                # 불명확 입력 → READY 유지 후 확인 메시지 재표시 (안전 기본값)
+                delta = {"operations": []}
+        elif is_cancel(ctx.user_message) and ctx.state.stage == Stage.FILLING:
+            # INIT 단계에서는 shortcut 미적용 — 진행 중인 이체가 없으므로
+            # InteractionAgent가 "취소할 이체가 없어요"로 자연스럽게 응대하도록 위임
+            delta = {"operations": [{"op": "cancel_flow"}]}
+        else:
+            delta = self.runner.run("slot", ctx)
 
         # 다건 감지: INIT·FILLING 단계에서만 허용.
         # READY 이후에는 히스토리 재감지를 무시 → 진행 중 배치 리셋 방지.
@@ -231,17 +240,5 @@ class TransferFlowHandler(BaseFlowHandler):
             return
 
         # ── 3f. FILLING / INIT — InteractionAgent ────────────────────────────
-        yield {"event": EventType.AGENT_START, "payload": {"agent": "interaction", "label": "응답 생성 중"}}
-        payload = None
-        for ev in self.runner.run_stream("interaction", ctx):
-            yield ev
-            if ev.get("event") == EventType.LLM_DONE:
-                payload = ev.get("payload")
-        yield {"event": EventType.AGENT_DONE, "payload": {"agent": "interaction", "label": "응답 완료", "success": True}}
-
-        if payload:
-            update_memory_and_save(
-                self.memory_manager, self.sessions, ctx.session_id,
-                ctx.state, ctx.memory, ctx.user_message, payload.get("message", ""),
-            )
-        yield {"event": EventType.DONE, "payload": _yield_done(ctx, payload or {})}
+        yield from self._stream_agent_turn(ctx, "interaction", "응답 생성 중",
+                                           done_transform=_apply_ui_policy)
