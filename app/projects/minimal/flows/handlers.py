@@ -4,7 +4,7 @@ from typing import Any, Dict, Generator
 
 from app.core.context import ExecutionContext
 from app.core.events import EventType
-from app.core.orchestration import BaseFlowHandler, update_memory_and_save
+from app.core.orchestration import BaseFlowHandler, update_memory
 
 
 class MinimalFlowHandler(BaseFlowHandler):
@@ -17,11 +17,8 @@ class MinimalFlowHandler(BaseFlowHandler):
             if ev.get("event") == EventType.LLM_DONE:
                 payload = ev.get("payload") or {}
         if payload:
-            update_memory_and_save(
+            update_memory(
                 self.memory_manager,
-                self.sessions,
-                ctx.session_id,
-                ctx.state,
                 ctx.memory,
                 ctx.user_message,
                 payload.get("message", ""),

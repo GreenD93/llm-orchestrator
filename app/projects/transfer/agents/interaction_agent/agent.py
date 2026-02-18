@@ -1,6 +1,6 @@
 # app/projects/transfer/agents/interaction_agent/agent.py
 import json
-from app.core.agents.base_agent import BaseAgent
+from app.core.agents.base_agent import BaseAgent, AgentPolicy
 from app.core.context import ExecutionContext
 from app.core.events import EventType
 from app.projects.transfer.agents.schemas import InteractionResult
@@ -10,8 +10,13 @@ _FALLBACK = {"action": "DONE", "message": "응답 생성 중 오류가 발생했
 
 
 class InteractionAgent(BaseAgent):
-    output_schema = "InteractionResult"
+    name = "interaction"
+    description = "사용자 인터랙션"
+    output_type = InteractionResult
+    default_model = "gpt-4.1-mini"
+    default_temperature = 0.2
     supports_stream = True
+    policy = AgentPolicy(max_retry=1)
 
     @classmethod
     def get_system_prompt(cls) -> str:

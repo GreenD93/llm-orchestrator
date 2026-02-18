@@ -1,3 +1,4 @@
-# Tool 등록은 app.plugins.experimental.tool_registry 사용 (선택 사항).
+# app/core/tools/__init__.py
+from app.core.tools.decorator import tool, ToolDefinition
 
-__all__ = []
+__all__ = ["tool", "ToolDefinition"]

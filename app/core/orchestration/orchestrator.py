@@ -34,6 +34,7 @@ class CoreOrchestrator:
                 completed=self.completed,
             )
         self._default_flow = manifest.get("default_flow") or list(self._flow_handlers.keys())[0]
+        self._intent_agent = manifest.get("intent_agent")  # e.g. "intent", None이면 intent 라우팅 건너뜀
         self._on_error = manifest.get("on_error")
         self._after_turn = manifest.get("after_turn")
 
@@ -48,11 +49,11 @@ class CoreOrchestrator:
             metadata={},
         )
 
-        # Flow 결정: intent 실행(있으면) 후 Router
+        # Flow 결정: intent 에이전트 설정이 있으면 실행 후 Router
         intent = "OTHER"
-        if "intent" in self._runner._agents:
+        if self._intent_agent and self._intent_agent in self._runner._agents:
             try:
-                intent_result = self._runner.run("intent", ctx)
+                intent_result = self._runner.run(self._intent_agent, ctx)
                 intent = intent_result.get("intent", "OTHER")
                 supported = intent_result.get("supported", True)
                 if not supported:

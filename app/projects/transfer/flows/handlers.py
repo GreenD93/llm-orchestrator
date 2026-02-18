@@ -3,7 +3,7 @@ from typing import Any, Dict, Generator
 
 from app.core.context import ExecutionContext
 from app.core.events import EventType
-from app.core.orchestration import BaseFlowHandler, update_memory_and_save
+from app.core.orchestration import BaseFlowHandler, update_memory
 from app.core.agents.agent_runner import RetryableError, FatalExecutionError
 from app.projects.transfer.state.models import Stage, TERMINAL_STAGES, TransferState
 
@@ -32,11 +32,8 @@ class DefaultFlowHandler(BaseFlowHandler):
             if ev.get("event") == EventType.LLM_DONE:
                 payload = ev.get("payload")
         if payload:
-            update_memory_and_save(
+            update_memory(
                 self.memory_manager,
-                self.sessions,
-                ctx.session_id,
-                ctx.state,
                 ctx.memory,
                 ctx.user_message,
                 payload.get("message", ""),
@@ -56,14 +53,13 @@ class TransferFlowHandler(BaseFlowHandler):
 
         if getattr(ctx.state, "stage", None) == Stage.UNSUPPORTED:
             payload = {"message": UNSUPPORTED_MESSAGE, "action": "DONE"}
-            update_memory_and_save(
-                self.memory_manager, self.sessions, ctx.session_id, ctx.state, ctx.memory,
+            update_memory(
+                self.memory_manager, ctx.memory,
                 ctx.user_message, payload["message"],
             )
             if self.completed:
                 self.completed.add(ctx.session_id, ctx.state, ctx.memory)
             ctx.state = TransferState()
-            self.sessions.save_state(ctx.session_id, ctx.state)
             yield {"event": EventType.DONE, "payload": _apply_ui_policy(payload)}
             return
 
@@ -76,7 +72,6 @@ class TransferFlowHandler(BaseFlowHandler):
                 ctx.state.meta.setdefault("execution", {})["retryable"] = True
             except FatalExecutionError:
                 ctx.state.stage = Stage.FAILED
-            self.sessions.save_state(ctx.session_id, ctx.state)
 
         payload = None
         for ev in self.runner.run_stream("interaction", ctx):
@@ -85,11 +80,8 @@ class TransferFlowHandler(BaseFlowHandler):
                 payload = ev.get("payload")
 
         if payload:
-            update_memory_and_save(
+            update_memory(
                 self.memory_manager,
-                self.sessions,
-                ctx.session_id,
-                ctx.state,
                 ctx.memory,
                 ctx.user_message,
                 payload.get("message", ""),
@@ -99,6 +91,5 @@ class TransferFlowHandler(BaseFlowHandler):
             if self.completed:
                 self.completed.add(ctx.session_id, ctx.state, ctx.memory)
             ctx.state = TransferState()
-            self.sessions.save_state(ctx.session_id, ctx.state)
 
         yield {"event": EventType.DONE, "payload": _apply_ui_policy(payload or {})}

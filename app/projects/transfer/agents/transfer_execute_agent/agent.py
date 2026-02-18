@@ -1,11 +1,15 @@
 # app/projects/transfer/agents/transfer_execute_agent/agent.py
-from app.core.agents.base_agent import BaseAgent
+from app.core.agents.base_agent import BaseAgent, AgentPolicy
 from app.core.agents.agent_runner import RetryableError, FatalExecutionError
 from app.core.context import ExecutionContext
 from app.projects.transfer.agents.transfer_execute_agent.prompt import get_system_prompt
 
 
 class TransferExecuteAgent(BaseAgent):
+    name = "execute"
+    description = "이체 실행"
+    policy = AgentPolicy(max_retry=2, backoff_sec=1)
+
     @classmethod
     def get_system_prompt(cls) -> str:
         return get_system_prompt()

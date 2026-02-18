@@ -3,8 +3,12 @@ name: minimal
 
 agents:
   interaction:
+<<<<<<< HEAD
     class: InteractionAgent
     card: agents/interaction_agent/card.json
+=======
+    class: agents.interaction_agent.agent.InteractionAgent
+>>>>>>> 54bcbbf (claude ver1.)
     stream: true
 
 flows:
