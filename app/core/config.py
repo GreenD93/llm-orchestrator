@@ -23,7 +23,7 @@ class Settings(BaseModel):
 
     # 자동 요약: raw_history가 SUMMARIZE_THRESHOLD 턴 이상이면 LLM으로 요약
     MEMORY_ENABLE_SUMMARY: bool = os.getenv("MEMORY_ENABLE_SUMMARY", "true").lower() == "true"
-    MEMORY_SUMMARIZE_THRESHOLD: int = int(os.getenv("MEMORY_SUMMARIZE_THRESHOLD", "8"))
+    MEMORY_SUMMARIZE_THRESHOLD: int = int(os.getenv("MEMORY_SUMMARIZE_THRESHOLD", "6"))
     MEMORY_KEEP_RECENT_TURNS: int = int(os.getenv("MEMORY_KEEP_RECENT_TURNS", "4"))
 
     MEMORY_SUMMARY_MODEL: str = os.getenv("MEMORY_SUMMARY_MODEL", "gpt-4o-mini")

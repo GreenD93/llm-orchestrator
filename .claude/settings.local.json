@@ -16,7 +16,8 @@
       "Bash(chmod:*)",
       "Bash(micromamba run -n transfer python -m pytest:*)",
       "Bash(/Users/yg93_jo/micromamba/envs/transfer/bin/python -m pytest app/projects/transfer/tests/ -q)",
-      "Bash(python -c:*)"
+      "Bash(python -c:*)",
+      "Bash(python -m pytest:*)"
     ]
   }
 }

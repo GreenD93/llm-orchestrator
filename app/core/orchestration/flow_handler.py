@@ -1,5 +1,36 @@
 # app/core/orchestration/flow_handler.py
-"""FlowHandler: agent 실행만. run(ctx)에서 Runner로 에이전트 호출·이벤트 yield. flow 결정은 Router 담당."""
+"""
+FlowHandler: 에이전트 실행 순서와 분기 로직의 유일한 위치.
+
+─── 역할 분리 ───────────────────────────────────────────────────────────────
+  CoreOrchestrator → 세션 관리·Intent 분류·Router 호출·훅 실행
+  FlowRouter       → intent_result + state → flow_key 결정
+  FlowHandler      → flow_key에 해당하는 에이전트 파이프라인 실행  ← 여기
+
+─── 구현 방법 ───────────────────────────────────────────────────────────────
+단일 에이전트로 끝나는 단순 플로우:
+
+    class ChatFlowHandler(BaseFlowHandler):
+        def run(self, ctx):
+            yield from self._stream_agent_turn(ctx, "chat", "응답 생성 중")
+
+여러 에이전트가 연결되는 복잡 플로우:
+
+    class TransferFlowHandler(BaseFlowHandler):
+        def run(self, ctx):
+            # 1. SlotFiller (동기)
+            delta = self.runner.run("slot", ctx)
+            # 2. StateManager (코드)
+            ctx.state = self.state_manager_factory(ctx.state).apply(delta)
+            yield {"event": EventType.AGENT_DONE, ...}
+            # 3. 단계별 분기
+            if ctx.state.stage == Stage.READY:
+                ...
+            else:
+                # InteractionAgent (스트리밍)
+                yield from self._stream_agent_turn(ctx, "interaction", "응답 생성 중",
+                                                   done_transform=_apply_ui_policy)
+"""
 
 from typing import Any, Callable, Dict, Generator, Optional
 
@@ -11,13 +42,22 @@ from app.core.orchestration.flow_utils import update_memory_and_save
 class BaseFlowHandler:
     """
     에이전트 실행 순서·분기 로직의 유일한 위치.
-    Runner.run(agent_name, ctx) 또는 Runner.run_stream(agent_name, ctx)로 에이전트 호출.
-    세션·메모리 저장은 update_memory_and_save() 또는 _stream_agent_turn() 사용.
+
+    self.runner.run(agent_name, ctx)         — 동기 에이전트 실행
+    self.runner.run_stream(agent_name, ctx)  — 스트리밍 에이전트 실행
+    self._stream_agent_turn(...)             — 대화 턴 마무리 헬퍼 (권장)
+
+    Attributes:
+        runner:                  AgentRunner (에이전트 이름으로 실행)
+        sessions:                SessionStore (세션 state 저장)
+        memory_manager:          MemoryManager (대화 요약·히스토리 관리)
+        state_manager_factory:   state → StateManager 팩토리 함수
+        completed:               CompletedStore (완료 이력 기록)
     """
 
     def __init__(
         self,
-        runner: Any,  # AgentRunner
+        runner: Any,
         sessions: Any,
         memory_manager: Any,
         state_manager_factory: Any,
@@ -30,6 +70,12 @@ class BaseFlowHandler:
         self.completed = completed
 
     def run(self, ctx: ExecutionContext) -> Generator[Dict[str, Any], None, None]:
+        """
+        이 플로우의 에이전트 파이프라인을 실행한다.
+
+        반드시 EventType.DONE 이벤트를 마지막으로 yield해야 한다.
+        DONE 이벤트의 payload에는 state_snapshot이 포함되어야 한다.
+        """
         raise NotImplementedError
 
     # ── 공통 헬퍼 ─────────────────────────────────────────────────────────────
@@ -43,23 +89,28 @@ class BaseFlowHandler:
         done_transform: Optional[Callable[[dict], dict]] = None,
     ) -> Generator[Dict[str, Any], None, None]:
         """
-        단일 에이전트 호출로 대화 턴을 마무리하는 공통 패턴.
+        단일 에이전트 호출로 대화 턴을 마무리하는 공통 헬퍼.
 
-        AGENT_START → 에이전트 스트리밍 → AGENT_DONE → 메모리 저장 → DONE 이벤트.
+        AGENT_START → 에이전트 스트리밍 → AGENT_DONE → 메모리 저장 → DONE
 
-        done_transform: DONE payload에 적용할 변환 함수 (UI 정책 적용 등).
-                        None이면 LLM 원본 payload에 state_snapshot만 추가.
+        이 헬퍼는 에이전트가 마지막 단계인 경우에만 사용한다.
+        중간 단계 에이전트(SlotFiller 등)는 runner.run()을 직접 호출한다.
 
-        사용 예:
-            # 단순 (minimal 등)
-            yield from self._stream_agent_turn(ctx, "chat", "응답 생성 중")
+        Args:
+            ctx:           실행 컨텍스트
+            agent_name:    실행할 에이전트 키 ("chat", "interaction", ...)
+            start_label:   AGENT_START 라벨 ("응답 생성 중")
+            done_label:    AGENT_DONE 라벨 ("응답 완료")
+            done_transform: DONE payload에 적용할 변환 함수.
+                            None이면 LLM 원본 payload + state_snapshot 반환.
+                            UI 정책 적용(버튼 목록 등)에 활용.
 
-            # UI 정책 적용 (transfer 등)
-            yield from self._stream_agent_turn(ctx, "interaction", "응답 생성 중",
-                                               done_transform=_apply_ui_policy)
+        yields:
+            AGENT_START → LLM_TOKEN* → LLM_DONE → AGENT_DONE → DONE
         """
         yield {"event": EventType.AGENT_START, "payload": {"agent": agent_name, "label": start_label}}
 
+        # 에이전트 스트리밍 — LLM_DONE 이벤트의 payload를 캡처
         payload = None
         for ev in self.runner.run_stream(agent_name, ctx):
             yield ev
@@ -70,6 +121,7 @@ class BaseFlowHandler:
             "agent": agent_name, "label": done_label, "success": True,
         }}
 
+        # 메모리 갱신 (raw_history 추가 + 필요 시 자동 요약)
         if payload:
             update_memory_and_save(
                 self.memory_manager, self.sessions,
@@ -77,9 +129,11 @@ class BaseFlowHandler:
                 ctx.user_message, payload.get("message", ""),
             )
 
+        # DONE 이벤트 구성
         done_payload = dict(payload or {})
         if done_transform:
             done_payload = done_transform(done_payload)
+        # state_snapshot: 프론트가 현재 상태를 표시하는 데 사용
         done_payload["state_snapshot"] = (
             ctx.state.model_dump() if hasattr(ctx.state, "model_dump") else {}
         )

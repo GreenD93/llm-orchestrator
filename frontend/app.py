@@ -306,23 +306,79 @@ def render_completed(completed: list):
         )
 
 
+def render_memory(debug_data: dict):
+    """대화 메모리 — 요약 + 히스토리 탭."""
+    if not debug_data:
+        st.markdown("<p class='muted'>메모리 데이터 없음</p>", unsafe_allow_html=True)
+        return
+
+    memory  = debug_data.get("memory", {})
+    summary = memory.get("summary_text", "")
+    history = memory.get("raw_history", [])
+    turns   = memory.get("raw_history_turns", 0)
+
+    threshold = memory.get("summarize_threshold", 6)
+
+    tab_summary, tab_history = st.tabs(["📝 요약", f"💬 히스토리 ({turns}턴)"])
+
+    with tab_summary:
+        if summary:
+            st.markdown(
+                f"<div style='"
+                f"background:rgba(128,128,128,0.08);border-left:3px solid #1976D2;"
+                f"border-radius:6px;padding:12px 16px;font-size:14px;line-height:1.7;"
+                f"white-space:pre-wrap'>{summary}</div>",
+                unsafe_allow_html=True,
+            )
+        elif turns > 0:
+            remaining = max(0, threshold - turns)
+            if remaining > 0:
+                st.markdown(
+                    f"<p class='muted'>현재 {turns}턴 대화 중 — "
+                    f"{remaining}턴 더 쌓이면 자동으로 요약이 생성됩니다.</p>",
+                    unsafe_allow_html=True,
+                )
+            else:
+                st.markdown(
+                    "<p class='muted'>요약을 생성 중이에요...</p>",
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                "<p class='muted'>대화를 시작하면 요약이 자동으로 생성됩니다.</p>",
+                unsafe_allow_html=True,
+            )
+
+    with tab_history:
+        if history:
+            for msg in history:
+                role    = msg.get("role", "")
+                content = msg.get("content", "")
+                icon    = "🧑" if role == "user" else "🤖"
+                align   = "right" if role == "user" else "left"
+                bg      = "rgba(33,150,243,0.10)" if role == "user" else "rgba(128,128,128,0.08)"
+                st.markdown(
+                    f"<div style='text-align:{align};margin:4px 0'>"
+                    f"<span style='display:inline-block;max-width:85%;"
+                    f"background:{bg};border-radius:10px;padding:7px 12px;"
+                    f"font-size:13px;line-height:1.5;white-space:pre-wrap'>"
+                    f"{icon} {content}"
+                    f"</span></div>",
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown("<p class='muted'>히스토리 없음</p>", unsafe_allow_html=True)
+
+
 def render_memory_debug(debug_data: dict):
-    """메모리 / 세션 내부 상태 (개발용)."""
+    """세션 내부 상태 — 에러 정보 + state JSON (개발용)."""
     if not debug_data:
         st.caption("디버그 데이터 없음 (백엔드 DEV_MODE=true 확인)")
         return
 
-    memory = debug_data.get("memory", {})
-    state  = debug_data.get("state", {})
-    meta   = state.get("meta", {})
+    state = debug_data.get("state", {})
+    meta  = state.get("meta", {})
 
-    turns   = memory.get("raw_history_turns", 0)
-    summary = memory.get("summary_text", "")
-    st.markdown(f"**대화 턴:** {turns}턴 누적")
-    if summary:
-        st.markdown(f"**요약:**\n> {summary}")
-
-    # 에이전트 실행 오류 정보
     exec_err = meta.get("execution") or meta.get("slot_errors")
     if exec_err:
         st.markdown("**⚠️ 마지막 실행 오류:**")
@@ -330,13 +386,6 @@ def render_memory_debug(debug_data: dict):
 
     with st.expander("state JSON", expanded=False):
         st.json(state)
-
-    history = memory.get("raw_history", [])
-    if history:
-        with st.expander(f"raw_history ({len(history)}개)", expanded=False):
-            for msg in history:
-                role = "🧑" if msg.get("role") == "user" else "🤖"
-                st.markdown(f"{role} {msg.get('content', '')}")
 
 
 # ─── 배치 태스크 상태 헬퍼 ────────────────────────────────────────────────────
@@ -447,7 +496,10 @@ with info_col:
 
     st.divider()
 
-    with st.expander("🔍 메모리 디버그 (개발용)", expanded=False):
+    st.subheader("대화 메모리")
+    render_memory(st.session_state.debug_data)
+
+    with st.expander("🔍 디버그 (개발용)", expanded=False):
         render_memory_debug(st.session_state.debug_data)
 
 

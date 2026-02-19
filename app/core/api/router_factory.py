@@ -67,14 +67,15 @@ def create_agent_router(orchestrator: Any) -> APIRouter:
             state, memory = sessions.get_or_create(session_id)
             completed = orchestrator.completed.list_for_session(session_id)
 
+            raw_history = memory.get("raw_history", [])
             return {
                 "session_id": session_id,
                 "state": state.model_dump() if hasattr(state, "model_dump") else state,
                 "memory": {
                     "summary_text": memory.get("summary_text", ""),
-                    "summary_struct": memory.get("summary_struct", {}),
-                    "raw_history": memory.get("raw_history", []),
-                    "raw_history_turns": len(memory.get("raw_history", [])) // 2,
+                    "raw_history": raw_history,
+                    "raw_history_turns": len(raw_history) // 2,
+                    "summarize_threshold": settings.MEMORY_SUMMARIZE_THRESHOLD,
                 },
                 "completed": completed,
             }
