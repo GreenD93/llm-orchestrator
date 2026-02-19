@@ -1,22 +1,21 @@
 # app/core/llm/openai_client.py
 """
-OpenAI API 클라이언트 래퍼.
+OpenAI API 클라이언트 — BaseLLMClient 구현.
 
-BaseAgent가 직접 사용하는 유일한 LLM 호출 레이어.
-모델 교체(Anthropic, Gemini 등)가 필요하면 이 파일만 수정하거나
-같은 인터페이스(chat / chat_stream)를 가진 클래스로 교체한다.
-
-─── 인터페이스 ──────────────────────────────────────────────────────────────
-  chat()        → OpenAI ChatCompletion 응답 객체 (동기)
-  chat_stream() → 토큰 문자열 generator (스트리밍)
+system_prompt를 messages 앞에 prepend하고, tool 스키마를 OpenAI 포맷으로 변환한다.
 """
 
+import json
+from typing import Generator
+
 from openai import OpenAI
+
 from app.core.config import settings
+from app.core.llm.base_client import BaseLLMClient, LLMResponse, ToolCall
 
 
-class OpenAIClient:
-    """OpenAI API 단순 래퍼. 인증·설정은 settings에서 주입."""
+class OpenAIClient(BaseLLMClient):
+    """OpenAI API 래퍼. BaseLLMClient 인터페이스 구현."""
 
     def __init__(self):
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
@@ -26,49 +25,47 @@ class OpenAIClient:
         *,
         model: str,
         temperature: float,
+        system_prompt: str,
         messages: list,
         timeout: int | None = None,
         tools: list | None = None,
-    ):
-        """
-        동기 ChatCompletion 호출.
-
-        Args:
-            model:       OpenAI 모델명 (예: "gpt-4o-mini", "gpt-4o")
-            temperature: 0=결정론적, 높을수록 창의적
-            messages:    [{"role": "system"|"user"|"assistant", "content": "..."}]
-            timeout:     초 단위 타임아웃. None이면 OpenAI SDK 기본값 사용
-            tools:       OpenAI function-calling 스키마 목록. None이면 tool 미사용
-
-        Returns:
-            openai.types.chat.ChatCompletion — choices[0].message.content로 접근
-        """
-        kwargs = dict(model=model, messages=messages, temperature=temperature, timeout=timeout)
+    ) -> LLMResponse:
+        msgs = [{"role": "system", "content": system_prompt}, *messages]
+        kwargs = dict(model=model, messages=msgs, temperature=temperature, timeout=timeout)
         if tools:
-            kwargs["tools"] = tools
-        return self.client.chat.completions.create(**kwargs)
+            kwargs["tools"] = [{"type": "function", "function": t} for t in tools]
+
+        resp = self.client.chat.completions.create(**kwargs)
+        choice = resp.choices[0]
+
+        tool_calls = []
+        if getattr(choice.message, "tool_calls", None):
+            for tc in choice.message.tool_calls:
+                tool_calls.append(ToolCall(
+                    id=tc.id,
+                    name=tc.function.name,
+                    arguments=json.loads(tc.function.arguments),
+                ))
+
+        return LLMResponse(
+            content=(choice.message.content or "").strip() or None,
+            tool_calls=tool_calls,
+            _raw=choice.message,
+        )
 
     def chat_stream(
         self,
         *,
         model: str,
         temperature: float,
+        system_prompt: str,
         messages: list,
         timeout: int | None = None,
-    ):
-        """
-        스트리밍 ChatCompletion 호출. 토큰 문자열을 yield한다.
-
-        Notes:
-            - stream=True로 고정. tools를 지원하지 않는다.
-            - delta.content가 None인 청크(첫 번째·마지막 등)는 자동으로 건너뜀.
-
-        Yields:
-            str: LLM이 생성한 토큰 (delta.content)
-        """
+    ) -> Generator[str, None, None]:
+        msgs = [{"role": "system", "content": system_prompt}, *messages]
         stream = self.client.chat.completions.create(
             model=model,
-            messages=messages,
+            messages=msgs,
             temperature=temperature,
             stream=True,
             timeout=timeout,
@@ -77,3 +74,10 @@ class OpenAIClient:
             delta = chunk.choices[0].delta
             if delta and delta.content:
                 yield delta.content
+
+    def build_assistant_message(self, response: LLMResponse) -> dict:
+        """OpenAI message 객체를 그대로 반환 (SDK가 dict-like 처리)."""
+        return response._raw
+
+    def build_tool_result_message(self, tool_call_id: str, content: str) -> dict:
+        return {"role": "tool", "tool_call_id": tool_call_id, "content": content}

@@ -36,7 +36,6 @@ from typing import Any, Callable, Dict, Generator, Optional
 
 from app.core.context import ExecutionContext
 from app.core.events import EventType
-from app.core.orchestration.flow_utils import update_memory_and_save
 
 
 class BaseFlowHandler:
@@ -78,6 +77,19 @@ class BaseFlowHandler:
         """
         raise NotImplementedError
 
+    # ── 메모리 유틸 ───────────────────────────────────────────────────────────
+
+    def _update_memory(self, ctx: ExecutionContext, assistant_message: str) -> None:
+        """
+        대화 메모리 갱신 후 세션 저장.
+
+        호출 시점: DONE 이벤트 yield 직전.
+        1. memory_manager.update() — raw_history 추가, 필요 시 자동 요약
+        2. sessions.save_state()  — 갱신된 state + memory 영속화
+        """
+        self.memory_manager.update(ctx.memory, ctx.user_message, assistant_message)
+        self.sessions.save_state(ctx.session_id, ctx.state)
+
     # ── 공통 헬퍼 ─────────────────────────────────────────────────────────────
 
     def _stream_agent_turn(
@@ -117,17 +129,18 @@ class BaseFlowHandler:
             if ev.get("event") == EventType.LLM_DONE:
                 payload = ev.get("payload")
 
+        elapsed_info = {}
+        if ctx.tracer and ctx.tracer.last:
+            elapsed_info["elapsed_ms"] = ctx.tracer.last.elapsed_ms
+
         yield {"event": EventType.AGENT_DONE, "payload": {
             "agent": agent_name, "label": done_label, "success": True,
+            **elapsed_info,
         }}
 
         # 메모리 갱신 (raw_history 추가 + 필요 시 자동 요약)
         if payload:
-            update_memory_and_save(
-                self.memory_manager, self.sessions,
-                ctx.session_id, ctx.state, ctx.memory,
-                ctx.user_message, payload.get("message", ""),
-            )
+            self._update_memory(ctx, payload.get("message", ""))
 
         # DONE 이벤트 구성
         done_payload = dict(payload or {})

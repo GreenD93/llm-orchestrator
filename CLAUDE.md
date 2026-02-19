@@ -2,6 +2,8 @@
 
 세션 시작 시 자동으로 읽힌다. 신규 서비스 개발·버그 수정·리팩토링 모두 이 문서를 먼저 참조.
 
+> **상세 가이드**: [GUIDE.md](GUIDE.md) — 아키텍처, 새 서비스 만들기, 코드 패턴, API 스펙, 디버깅 종합 문서.
+
 ---
 
 ## 이 프레임워크가 하는 일
@@ -54,6 +56,10 @@ POST /v1/agent/chat/stream
 | `BaseState` | 서비스 상태. Pydantic 모델 | 각 프로젝트 `state/models.py` |
 | `StateManager` | state 전이 로직 (코드). LLM delta를 받아 state 업데이트 | 각 프로젝트 `state/state_manager.py` |
 | `MemoryManager` | summary_text 자동 요약 + raw_history 관리 | `core/memory/memory_manager.py` |
+| `TurnTracer` | 턴 단위 에이전트 실행 추적. AgentRunner가 자동 기록 | `core/tracing.py` |
+| `AgentResult` | 에이전트 표준 응답 (success/need_info/cannot_handle/partial) | `core/agents/agent_result.py` |
+| `ManifestBuilder` | manifest.py 보일러플레이트를 빌더 패턴으로 간소화 | `core/orchestration/manifest_loader.py` |
+| `BaseLLMClient` | LLM 프로바이더 인터페이스. OpenAI/Anthropic 교체 가능 | `core/llm/base_client.py` |
 | `SuperOrchestrator` | 여러 CoreOrchestrator / A2AServiceProxy를 하나로 묶음 | `core/orchestration/super_orchestrator.py` |
 
 ### 메모리 구조
@@ -88,9 +94,9 @@ messages = context.build_messages("현재 상태: ...")
 AGENT_START  → agent 시작 알림 (label: "의도 파악 중")
 LLM_TOKEN    → LLM 글자 단위 스트리밍
 LLM_DONE     → LLM 전체 응답 완료 (parsed dict)
-AGENT_DONE   → agent 완료 알림 (success, retry_count)
+AGENT_DONE   → agent 완료 알림 (success, retry_count, elapsed_ms)
 TASK_PROGRESS → 배치 이체 진행 상황 (index/total)
-DONE         → 턴 완료. payload에 message, state_snapshot, hooks 포함
+DONE         → 턴 완료. payload에 message, state_snapshot, hooks, _trace 포함
 ```
 
 ### LLM vs 코드 제어 경계
@@ -122,7 +128,7 @@ DONE         → 턴 완료. payload에 message, state_snapshot, hooks 포함
 
 3. **DONE 이벤트에는 반드시 `state_snapshot`을 포함한다.**
 
-4. **`update_memory_and_save()`는 DONE yield 직전에 호출한다.**
+4. **`_update_memory(ctx, message)`는 DONE yield 직전에 호출한다.** (`BaseFlowHandler` 메서드)
 
 5. **`on_error`는 `lambda e: make_error_event(e)` 패턴.** 예외를 반드시 전달한다. (`core/orchestration/defaults.py`)
 
@@ -190,7 +196,7 @@ yield from self._stream_agent_turn(ctx, "interaction", "응답 생성 중",
 ```
 
 `done_transform`이 없으면 LLM 원본 payload에 `state_snapshot`만 추가.
-**중간 단계에서 직접 메모리·DONE을 처리할 때는 헬퍼 사용하지 않는다** — `update_memory_and_save()`를 직접 호출한다 (READY/TERMINAL/UNSUPPORTED 분기 등).
+**중간 단계에서 직접 메모리·DONE을 처리할 때는 헬퍼 사용하지 않는다** — `self._update_memory(ctx, message)`를 직접 호출한다 (READY/TERMINAL/UNSUPPORTED 분기 등).
 
 ---
 
@@ -285,6 +291,136 @@ Orchestrator →  프론트로 DONE 이벤트 yield (hooks 포함)
 
 ---
 
+## TurnTracer — 에이전트 실행 추적
+
+Orchestrator가 턴 시작 시 `TurnTracer`를 생성해 `ExecutionContext.tracer`에 주입한다.
+AgentRunner가 매 에이전트 실행마다 자동으로 `tracer.record()`를 호출한다.
+
+DONE payload의 `_trace` 필드에 턴 전체 실행 히스토리가 포함된다:
+
+```json
+{
+  "_trace": {
+    "turn_id": "a1b2c3d4",
+    "total_elapsed_ms": 1234.5,
+    "agents": [
+      {"agent": "intent", "elapsed_ms": 200.1, "success": true, "retries": 0, "error": null},
+      {"agent": "slot",   "elapsed_ms": 150.3, "success": true, "retries": 0, "error": null}
+    ]
+  }
+}
+```
+
+`tracer=None`이면 기록을 건너뛴다 (하위 호환).
+
+---
+
+## AgentResult — 에이전트 표준 응답
+
+에이전트가 성공/실패/정보부족을 표현하는 표준 방법. 기존 dict 반환과 100% 호환.
+
+```python
+from app.core.agents.agent_result import AgentResult
+
+# 성공
+return AgentResult.success({"action": "ASK", "message": "안녕하세요"})
+
+# 파라미터 부족
+return AgentResult.need_info(["amount"], "이체 금액을 알려주세요.")
+
+# 처리 불가
+return AgentResult.cannot_handle("해외 이체는 지원하지 않습니다.")
+
+# 부분 성공 (파싱 에러 등)
+return AgentResult.partial({"operations": []}, reason="parse_error")
+```
+
+AgentRunner가 `isinstance(result, AgentResult)`를 확인해 자동으로 `to_dict()` 변환한다.
+FlowHandler는 항상 dict을 받으며 `_result_status` 필드로 상태를 인지할 수 있다.
+
+---
+
+## ManifestBuilder — manifest 간소화
+
+`ManifestBuilder`로 manifest.py 보일러플레이트를 빌더 패턴으로 줄인다.
+
+```python
+from app.core.orchestration.manifest_loader import ManifestBuilder
+
+# 최소 사용 (minimal 등)
+def load_manifest():
+    return (
+        ManifestBuilder(PROJECT_ROOT, PROJECT_MODULE)
+        .class_name_map({"ChatAgent": "agents.chat_agent.agent.ChatAgent"})
+        .build()
+    )
+
+# 복잡 사용 (transfer 등)
+def load_manifest():
+    return (
+        ManifestBuilder(PROJECT_ROOT, PROJECT_MODULE)
+        .class_name_map(_MAP)
+        .schema_registry(_SCHEMAS)
+        .validator_map(_VALIDATORS)
+        .sessions_factory(SessionStore)
+        .memory(summary_system_prompt="...", summary_user_template="...")
+        .build()
+    )
+```
+
+`sessions_factory`가 미지정이면 `project.yaml`의 `state.model` 필드로 State 클래스를 찾아 `InMemorySessionStore`를 자동 구성한다.
+
+기존 유틸 함수(`load_yaml`, `resolve_class`, `build_agents_from_yaml`)도 계속 사용 가능.
+
+---
+
+## LLM 프로바이더 추상화
+
+card.json의 `provider` 필드로 LLM 프로바이더를 교체할 수 있다 (기본값 `"openai"`).
+
+```json
+{
+  "llm": {
+    "provider": "anthropic",
+    "model": "claude-sonnet-4-20250514",
+    "temperature": 0
+  }
+}
+```
+
+### 아키텍처
+
+```
+card.json → provider + model 지정
+BaseAgent → BaseLLMClient 인터페이스만 사용
+각 프로바이더 → 메시지 포맷·tool 포맷·응답 파싱 내부 처리
+```
+
+| 파일 | 역할 |
+|------|------|
+| `core/llm/base_client.py` | `BaseLLMClient` 인터페이스, `LLMResponse`, `ToolCall` |
+| `core/llm/openai_client.py` | OpenAI 구현 |
+| `core/llm/anthropic_client.py` | Anthropic 구현 |
+| `core/llm/__init__.py` | `create_llm_client(provider)` 팩토리 |
+
+### 핵심 설계
+
+- **system_prompt 분리**: `chat(system_prompt=..., messages=...)`로 전달. 프로바이더가 내부 처리.
+  - OpenAI: messages 앞에 `{"role": "system", ...}` prepend
+  - Anthropic: `system` 파라미터로 전달
+- **tool 스키마 중립 포맷**: `{"name": ..., "description": ..., "parameters": {...}}`
+  - OpenAI: `{"type": "function", "function": schema}` 래핑
+  - Anthropic: `{"name": ..., "input_schema": schema["parameters"]}` 변환
+- **tool-call 루프**: `LLMResponse.tool_calls` → `build_assistant_message()` → `build_tool_result_message()` 로 프로바이더 독립적 처리
+
+### 새 프로바이더 추가 방법
+
+1. `core/llm/<provider>_client.py` — `BaseLLMClient` 구현
+2. `core/llm/__init__.py` — `create_llm_client()`에 분기 추가
+3. `core/config.py` — API 키 설정 추가
+
+---
+
 ## 오류 인지 — Agent 간 에러 전파 패턴
 
 SlotFiller 같은 upstream agent가 실패할 때 downstream InteractionAgent가 이를 인지하는 구조:
@@ -316,14 +452,14 @@ InteractionAgent
 
 ```
 app/projects/<name>/
-├── project.yaml       ← 서비스 이름·버전·에이전트 목록·router/handler 클래스
-├── manifest.py        ← CoreOrchestrator 조립 (minimal/manifest.py 참고)
+├── project.yaml       ← 서비스 이름·버전·에이전트 목록·router/handler 클래스·state.model
+├── manifest.py        ← ManifestBuilder로 CoreOrchestrator 조립 (minimal/manifest.py 참고)
 ├── messages.py        ← 사용자 노출 문구 상수 (코드 결정론적)
 ├── agents/
 │   └── <agent>/
 │       ├── agent.py   ← BaseAgent 상속. run() 또는 run_stream() 구현
 │       ├── prompt.py  ← get_system_prompt() 함수
-│       └── card.json  ← LLM 모델·temperature·policy·tools 설정
+│       └── card.json  ← LLM provider·model·temperature·policy·tools 설정
 ├── state/
 │   ├── models.py      ← BaseState + Stage enum + Slots + SLOT_SCHEMA
 │   ├── state_manager.py ← BaseStateManager 상속. apply(delta) 구현
@@ -405,6 +541,8 @@ orchestrator = SuperOrchestrator(
 
 | 버전 | 내용 |
 |------|------|
+| v1.6.0 | LLM 프로바이더 추상화 (BaseLLMClient + OpenAI/Anthropic), 데드코드 제거 (hooks.py, flow_utils.py, output_schema, stream 파라미터), `_update_memory()` 메서드로 통합, tool 스키마 중립 포맷 |
+| v1.5.0 | TurnTracer (에이전트 실행 추적), AgentResult (표준 응답), ManifestBuilder (manifest 간소화) |
 | v1.4.0 | 전체 core·project 파일 종합 주석 정비. `agent_runner.py` `"LLM_DONE"` 문자열 리터럴 → `EventType.LLM_DONE` 버그 수정 |
 | v1.3.0 | 오류 인지 전파 (parse_error→slot_errors), InteractionAgent 프롬프트 강화, SlotFiller 날짜 주입, is_confirm 패턴 보강, hooks 인프라 구현, 프론트엔드 메모리 탭 (요약+히스토리) |
 | v1.2.0 | `ConversationalAgent` 추출, `_stream_agent_turn()` 헬퍼, mid-flow Intent 스킵, retry UX (`on_retry` 콜백) |

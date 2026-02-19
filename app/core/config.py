@@ -10,6 +10,7 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 class Settings(BaseModel):
     APP_NAME: str = os.getenv("APP_NAME", "transfer-ai")
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
+    ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     DEV_MODE: bool = os.getenv("DEV_MODE", "true").lower() == "true"
 
     LOG_DIR: str = os.getenv("LOG_DIR", "logs")

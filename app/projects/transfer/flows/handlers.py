@@ -28,7 +28,7 @@ from typing import Any, Dict, Generator
 
 from app.core.context import ExecutionContext
 from app.core.events import EventType
-from app.core.orchestration import BaseFlowHandler, update_memory_and_save
+from app.core.orchestration import BaseFlowHandler
 from app.core.agents.agent_runner import RetryableError, FatalExecutionError
 from app.projects.transfer.state.models import Stage, TransferState, Slots, REQUIRED_SLOTS
 from app.projects.transfer.logic import is_confirm, is_cancel
@@ -183,10 +183,7 @@ class TransferFlowHandler(BaseFlowHandler):
         # ── 3a. UNSUPPORTED — 반복 실패 횟수 초과 ────────────────────────────
         if ctx.state.stage == Stage.UNSUPPORTED:
             payload = {"message": UNSUPPORTED_MESSAGE, "action": "DONE"}
-            update_memory_and_save(
-                self.memory_manager, self.sessions, ctx.session_id,
-                ctx.state, ctx.memory, ctx.user_message, payload["message"],
-            )
+            self._update_memory(ctx, payload["message"])
             if self.completed:
                 self.completed.add(ctx.session_id, ctx.state, ctx.memory)
             _reset_session(ctx, self.sessions)
@@ -258,10 +255,7 @@ class TransferFlowHandler(BaseFlowHandler):
                 message = TERMINAL_MESSAGES[ctx.state.stage]
 
             payload = {"message": message, "action": "DONE"}
-            update_memory_and_save(
-                self.memory_manager, self.sessions, ctx.session_id,
-                ctx.state, ctx.memory, ctx.user_message, message,
-            )
+            self._update_memory(ctx, message)
             if self.completed and ctx.state.stage in (Stage.FAILED, Stage.CANCELLED):
                 self.completed.add(ctx.session_id, ctx.state, ctx.memory)
             _reset_session(ctx, self.sessions)
@@ -275,10 +269,7 @@ class TransferFlowHandler(BaseFlowHandler):
             message = build_ready_message(ctx.state)
             ctx.state.meta.pop("last_cancelled", None)   # 이번 확인 메시지에 "취소됐어요." 접두 제거
             payload = {"action": "CONFIRM", "message": message}
-            update_memory_and_save(
-                self.memory_manager, self.sessions, ctx.session_id,
-                ctx.state, ctx.memory, ctx.user_message, message,
-            )
+            self._update_memory(ctx, message)
             yield {"event": EventType.DONE, "payload": _yield_done(ctx, payload)}
             return
 

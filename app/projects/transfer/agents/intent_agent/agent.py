@@ -6,8 +6,6 @@ from app.projects.transfer.agents.intent_agent.prompt import get_system_prompt
 
 
 class IntentAgent(BaseAgent):
-    output_schema = "IntentResult"
-
     # 이 프로젝트에서 분류 가능한 시나리오 목록
     # 새 서비스 추가 시: 여기에 값 추가 + prompt.py 분류 기준 추가 + SCENARIO_TO_FLOW 등록
     KNOWN_SCENARIOS = {"TRANSFER", "GENERAL"}

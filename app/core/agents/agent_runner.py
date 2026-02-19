@@ -24,9 +24,11 @@ from typing import Any, Callable, Dict, Generator, Optional
 
 from pydantic import ValidationError
 
+from app.core.agents.agent_result import AgentResult
 from app.core.context import ExecutionContext
 from app.core.events import EventType
 from app.core.logging import setup_logger
+from app.core.tracing import AgentRecord
 
 
 class RetryableError(Exception):
@@ -110,6 +112,8 @@ class AgentRunner:
             started = time.monotonic()
             try:
                 result = agent.run(context, **kwargs)
+                if isinstance(result, AgentResult):
+                    result = result.to_dict()
                 elapsed = time.monotonic() - started
 
                 # 타임아웃 체크 (실행 후 검사)
@@ -123,7 +127,13 @@ class AgentRunner:
                 # Pydantic 스키마 검증 — dict 그대로 반환
                 if schema and schema in self._schema_registry:
                     model = self._schema_registry[schema]
-                    return model.model_validate(result).model_dump()
+                    result = model.model_validate(result).model_dump()
+
+                if context.tracer:
+                    context.tracer.record(AgentRecord(
+                        agent=agent_name, elapsed_ms=round(elapsed * 1000, 1),
+                        success=True, retries=attempt - 1,
+                    ))
                 return result
 
             except (RetryableError, ValidationError) as e:
@@ -134,6 +144,12 @@ class AgentRunner:
                     context.metadata["execution"] = {
                         "agent": agent_name, "error": str(e), "attempt": attempt,
                     }
+                    if context.tracer:
+                        context.tracer.record(AgentRecord(
+                            agent=agent_name,
+                            elapsed_ms=round((time.monotonic() - started) * 1000, 1),
+                            success=False, retries=attempt, error=str(e),
+                        ))
                     raise
 
                 # 다음 시도 전: on_retry 콜백 호출 → 슬립
@@ -149,6 +165,12 @@ class AgentRunner:
                     "error": str(e),
                     "traceback": traceback.format_exc(),
                 }
+                if context.tracer:
+                    context.tracer.record(AgentRecord(
+                        agent=agent_name,
+                        elapsed_ms=round((time.monotonic() - started) * 1000, 1),
+                        success=False, error=str(e),
+                    ))
                 raise FatalExecutionError(str(e))
 
     def run_stream(
@@ -182,6 +204,13 @@ class AgentRunner:
                 if timeout_sec and (time.monotonic() - started) > timeout_sec:
                     raise RetryableError("stream_timeout_exceeded")
                 yield event
+
+            elapsed = time.monotonic() - started
+            if context.tracer:
+                context.tracer.record(AgentRecord(
+                    agent=agent_name, elapsed_ms=round(elapsed * 1000, 1),
+                    success=True,
+                ))
         except Exception as e:
             self.logger.error(f"[{agent_name}] stream failed: {e}")
             context.metadata["execution"] = {
@@ -189,4 +218,10 @@ class AgentRunner:
                 "error": str(e),
                 "traceback": traceback.format_exc(),
             }
+            if context.tracer:
+                context.tracer.record(AgentRecord(
+                    agent=agent_name,
+                    elapsed_ms=round((time.monotonic() - started) * 1000, 1),
+                    success=False, error=str(e),
+                ))
             raise

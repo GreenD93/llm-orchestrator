@@ -46,6 +46,7 @@ class ExecutionContext:
     state:        Any             # 프로젝트 State (BaseState 상속)
     memory:       Dict[str, Any]  # raw_history, summary_text 등
     metadata:     Dict[str, Any] = field(default_factory=dict)
+    tracer:       Any = None      # TurnTracer | None — 에이전트 실행 추적기
 
     def get_history(self, last_n: int = 12) -> list:
         """

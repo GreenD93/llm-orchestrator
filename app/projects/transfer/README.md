@@ -1,7 +1,7 @@
 # Transfer 서비스 — AI 이체 서비스
 
 이 문서는 `transfer` 프로젝트의 설계·구현 맥락을 기록한다.
-프레임워크 공통 개념은 루트의 `CLAUDE.md`, 전체 아키텍처는 `ARCHITECTURE.md` 참조.
+프레임워크 공통 개념은 루트의 `CLAUDE.md`, 종합 가이드는 `GUIDE.md` 참조.
 
 ---
 

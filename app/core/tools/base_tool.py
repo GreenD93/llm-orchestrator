@@ -8,25 +8,23 @@ BaseTool: 재사용 가능한 Tool 기반 클래스.
   3. 사용할 Agent의 card.json "tools": ["tool_name"] 에 추가
   4. AgentRunner 빌드 시 build_tools()가 자동 주입
 
-─── OpenAI function-calling 연동 ────────────────────────────────────────────
-  schema() 반환값이 OpenAI function-calling 형식이어야 한다:
+─── 프로바이더 중립 스키마 ─────────────────────────────────────────────────
+  schema() 반환값은 프로바이더 독립적 포맷이다:
   {
-      "type": "function",
-      "function": {
-          "name": "calculator",
-          "description": "수식을 계산합니다.",
-          "parameters": {
-              "type": "object",
-              "properties": {
-                  "expression": {"type": "string", "description": "계산할 수식"}
-              },
-              "required": ["expression"],
+      "name": "calculator",
+      "description": "수식을 계산합니다.",
+      "parameters": {
+          "type": "object",
+          "properties": {
+              "expression": {"type": "string", "description": "계산할 수식"}
           },
+          "required": ["expression"],
       },
   }
 
-  BaseAgent.chat()이 tool-call 루프에서 schema()를 읽어 LLM에 전달하고,
-  LLM이 tool_call을 반환하면 run(**args)을 호출한다.
+  각 LLM 클라이언트(OpenAI/Anthropic)가 chat() 내부에서 자체 포맷으로 변환한다:
+  - OpenAI: {"type": "function", "function": schema}
+  - Anthropic: {"name": ..., "description": ..., "input_schema": schema["parameters"]}
 """
 
 from abc import ABC, abstractmethod
@@ -42,8 +40,9 @@ class BaseTool(ABC):
     @abstractmethod
     def schema(self) -> dict:
         """
-        OpenAI function-calling 형식의 tool 정의를 반환한다.
-        LLM이 이 스키마를 읽고 언제·어떻게 tool을 호출할지 결정한다.
+        프로바이더 중립 포맷의 tool 정의를 반환한다.
+        {"name": ..., "description": ..., "parameters": {...}}
+        LLM 클라이언트가 프로바이더별 포맷으로 변환한다.
         """
         raise NotImplementedError
 

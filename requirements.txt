@@ -3,6 +3,7 @@ fastapi
 uvicorn
 pydantic
 openai
+anthropic
 sse-starlette
 pyyaml
 python-dotenv

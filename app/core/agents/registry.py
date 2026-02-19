@@ -77,7 +77,6 @@ def build_runner(
         agents[key] = cls(
             system_prompt=system_prompt,
             llm_config=llm,
-            stream=spec.get("stream", False),
             tools=build_tools(tool_names) if tool_names else [],
         )
 

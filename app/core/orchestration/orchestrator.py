@@ -49,8 +49,9 @@ from typing import Any, Dict, Generator
 
 from app.core.context import ExecutionContext
 from app.core.events import EventType
-from app.core.orchestration.defaults import make_error_event
 from app.core.logging import setup_logger
+from app.core.orchestration.defaults import make_error_event
+from app.core.tracing import TurnTracer
 
 
 class CoreOrchestrator:
@@ -119,12 +120,14 @@ class CoreOrchestrator:
         """
         # 1. 세션에서 state·memory 로드 (없으면 새로 생성)
         state, memory = self.sessions.get_or_create(session_id)
+        tracer = TurnTracer(session_id=session_id)
         ctx = ExecutionContext(
             session_id=session_id,
             user_message=user_message,
             state=state,
             memory=memory,
             metadata={},
+            tracer=tracer,
         )
 
         # ── 2. 진행 중인 플로우 감지 ────────────────────────────────────────
@@ -201,6 +204,9 @@ class CoreOrchestrator:
         finally:
             # 7. 세션 저장 — 예외가 발생해도 반드시 실행
             self.sessions.save_state(session_id, ctx.state)
+            # 7.5. DONE payload에 trace 삽입
+            if final_payload and ctx.tracer:
+                final_payload["_trace"] = ctx.tracer.summary()
             # 8. 훅 실행 — DONE payload가 있을 때만
             if final_payload:
                 self._fire_hooks(ctx, final_payload)

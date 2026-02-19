@@ -8,7 +8,6 @@ from app.projects.transfer.agents.interaction_agent.prompt import get_system_pro
 
 
 class InteractionAgent(ConversationalAgent):
-    output_schema = "InteractionResult"
     response_schema = InteractionResult
     fallback_message = "응답 생성 중 오류가 발생했어요."
 

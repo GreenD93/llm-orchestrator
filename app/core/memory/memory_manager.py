@@ -126,7 +126,7 @@ class MemoryManager:
 
         Notes:
             memory dict는 참조로 전달되므로 갱신이 세션에 즉시 반영된다.
-            sessions.save_state()는 별도로 flow_utils.update_memory_and_save()에서 호출한다.
+            sessions.save_state()는 별도로 BaseFlowHandler._update_memory()에서 호출한다.
         """
         if not self.enable_memory:
             return

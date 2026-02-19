@@ -8,8 +8,6 @@ from app.projects.transfer.agents.slot_filler_agent.prompt import get_system_pro
 
 
 class SlotFillerAgent(BaseAgent):
-    output_schema = "SlotResult"
-
     @classmethod
     def get_system_prompt(cls) -> str:
         return get_system_prompt()

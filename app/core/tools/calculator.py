@@ -20,23 +20,20 @@ class Calculator(BaseTool):
 
     def schema(self) -> dict:
         return {
-            "type": "function",
-            "function": {
-                "name": self.name,
-                "description": self.description,
-                "parameters": {
-                    "type": "object",
-                    "properties": {
-                        "a": {"type": "number", "description": "첫 번째 피연산자"},
-                        "b": {"type": "number", "description": "두 번째 피연산자"},
-                        "op": {
-                            "type": "string",
-                            "enum": ["add", "sub", "mul", "div"],
-                            "description": "연산자: add(덧셈), sub(뺄셈), mul(곱셈), div(나눗셈)",
-                        },
+            "name": self.name,
+            "description": self.description,
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "a": {"type": "number", "description": "첫 번째 피연산자"},
+                    "b": {"type": "number", "description": "두 번째 피연산자"},
+                    "op": {
+                        "type": "string",
+                        "enum": ["add", "sub", "mul", "div"],
+                        "description": "연산자: add(덧셈), sub(뺄셈), mul(곱셈), div(나눗셈)",
                     },
-                    "required": ["a", "b", "op"],
                 },
+                "required": ["a", "b", "op"],
             },
         }
 

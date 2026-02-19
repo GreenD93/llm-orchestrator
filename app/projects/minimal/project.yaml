@@ -18,4 +18,5 @@ flows:
     DEFAULT_FLOW: flows.handlers.ChatFlowHandler
 
 state:
+  model: state.models.MinimalState
   manager: state.models.MinimalStateManager

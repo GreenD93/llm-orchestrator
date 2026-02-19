@@ -25,4 +25,5 @@ flows:
     TRANSFER_FLOW: flows.handlers.TransferFlowHandler
 
 state:
+  model: state.models.TransferState
   manager: state.state_manager.TransferStateManager
