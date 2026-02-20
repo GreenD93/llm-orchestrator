@@ -43,6 +43,10 @@ class BaseTool(ABC):
         프로바이더 중립 포맷의 tool 정의를 반환한다.
         {"name": ..., "description": ..., "parameters": {...}}
         LLM 클라이언트가 프로바이더별 포맷으로 변환한다.
+
+        schema["description"]이 LLM이 읽는 유일한 설명이다.
+        이 설명만으로 LLM이 "언제 사용할지, 어떤 파라미터를 넘길지" 판단할 수 있어야 한다.
+        사용 예시를 포함하면 효과적이다.
         """
         raise NotImplementedError
 

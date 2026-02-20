@@ -131,6 +131,12 @@ class TransferFlowHandler(BaseFlowHandler):
                 if delta is None:
                     # 코드 파싱 실패 → SlotFiller LLM 호출 (메모·날짜 자유 입력 등)
                     delta = self.runner.run("slot", ctx)
+                    # READY의 confirm/cancel은 is_confirm()/is_cancel() 코드 전용.
+                    # SlotFiller가 슬롯 편집과 함께 반환해도 제거한다.
+                    ops = delta.get("operations", [])
+                    delta["operations"] = [
+                        o for o in ops if o.get("op") not in ("confirm", "cancel_flow")
+                    ]
         elif is_cancel(ctx.user_message) and ctx.state.stage == Stage.FILLING:
             # FILLING 단계에서 명시적 취소 → LLM 없이 바로 취소 처리
             # INIT 단계는 진행 중인 이체가 없으므로 shortcut 미적용:

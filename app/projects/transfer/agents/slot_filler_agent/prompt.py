@@ -34,10 +34,6 @@ SYSTEM_PROMPT = (
     "- 재이체 요청 ('아까 거 다시', '이전 거 또 보내줘', '같은 거 한 번 더' 등):\n"
     "  히스토리/summary에서 가장 최근 완료된 이체의 슬롯(target, amount, memo 등)을 추출해 set해라\n"
     "  히스토리에 이체 이력이 없으면 빈 operations 반환\n"
-    "- 금액에 산술 계산이 필요하면 calculator tool을 사용해라\n"
-    "  (예: '10000원을 5번 보내려 해' → calculator(a=10000, b=5, op='mul') → amount=50000)\n"
-    "  파라미터가 부족하면 tool을 호출하지 말고 빈 operations 반환\n"
-    "  (예: '5번 보내려 해' → 금액 불명 → operations:[])\n"
     "- 여러 이체 요청이 하나의 발화에 포함되면 tasks 형식으로 반환해라 (부분 입력도 허용)\n"
     '  {"tasks": [{"target": "용걸이", "amount": 10000}, {"target": "엄마", "amount": null}], "operations": []}\n'
     "  - 명확히 제공된 정보만 값을 채우고 불명확한 경우 null\n"

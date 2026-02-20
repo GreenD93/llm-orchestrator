@@ -1,59 +1,6 @@
 # LLM Orchestrator — 통합 가이드
 
-> **"GUIDE.md 읽고 XXX 서비스 만들어줘"** 한 마디로 바이브 코딩할 수 있는 종합 문서.
-
----
-
-## 1. 한눈에 보기
-
-**LLM 에이전트들을 조합해 대화형 AI 서비스를 만드는 백엔드 엔진.**
-
-- 사용자 메시지 1개 → 에이전트 파이프라인 실행 → SSE 이벤트 스트림 반환
-- 각 서비스는 `app/projects/<name>/`에 독립적으로 구현
-- `app/core/`는 공통 엔진이며 서비스별 로직을 포함하지 않는다
-- 여러 서비스를 `SuperOrchestrator`로 묶어 하나의 앱으로 확장 가능
-
-### 요청 1개의 전체 흐름
-
-```
-POST /v1/agent/chat/stream
-         |
-         v
-+---------------------------------------------------------+
-|                    CoreOrchestrator                      |
-|                                                         |
-|  1. SessionStore.get_or_create()  -> state, memory      |
-|  2. is_mid_flow 판별              -> IntentAgent 스킵?  |
-|  3. IntentAgent (optional)        -> scenario 분류      |
-|  4. FlowRouter.route()            -> flow_key 결정      |
-|  5. FlowHandler.run(ctx)          -> 이벤트 스트리밍     |
-|  6. (finally) SessionStore.save() + _fire_hooks()       |
-+--------------------------+------------------------------+
-                           |  SSE 이벤트 스트림
-                           v
-         AGENT_START -> LLM_TOKEN* -> LLM_DONE
-         -> AGENT_DONE -> TASK_PROGRESS? -> DONE
-```
-
-### 클래스 책임 분리표
-
-| 구성요소 | 역할 | 위치 |
-|----------|------|------|
-| `CoreOrchestrator` | 요청 수신, 세션 관리, 에러 핸들링, 훅 실행 | `core/orchestration/orchestrator.py` |
-| `ExecutionContext` | Agent가 읽는 유일한 입력 (state, memory, user_message) | `core/context.py` |
-| `BaseAgent` | LLM 호출 단위. `run()` 또는 `run_stream()` 구현 | 각 프로젝트 `agents/` |
-| `ConversationalAgent` | JSON 출력, 파싱, fallback, 스트리밍 기본 구현 | `core/agents/conversational_agent.py` |
-| `AgentRunner` | Agent를 이름으로 실행. retry, timeout, 스키마 검증 | `core/agents/agent_runner.py` |
-| `BaseFlowHandler` | **에이전트 실행 순서, 분기 로직의 유일한 위치** | 각 프로젝트 `flows/handlers.py` |
-| `BaseFlowRouter` | scenario -> flow_key 매핑 | 각 프로젝트 `flows/router.py` |
-| `BaseState` | 서비스 상태. Pydantic 모델 | 각 프로젝트 `state/models.py` |
-| `StateManager` | state 전이 로직 (코드). LLM delta를 받아 state 업데이트 | 각 프로젝트 `state/state_manager.py` |
-| `MemoryManager` | summary_text 자동 요약 + raw_history 관리 | `core/memory/memory_manager.py` |
-| `TurnTracer` | 턴 단위 에이전트 실행 추적. AgentRunner가 자동 기록 | `core/tracing.py` |
-| `AgentResult` | 에이전트 표준 응답 (success/need_info/cannot_handle/partial) | `core/agents/agent_result.py` |
-| `ManifestBuilder` | manifest.py 보일러플레이트를 빌더 패턴으로 간소화 | `core/orchestration/manifest_loader.py` |
-| `BaseLLMClient` | LLM 프로바이더 인터페이스. OpenAI/Anthropic 교체 가능 | `core/llm/base_client.py` |
-| `SuperOrchestrator` | 여러 CoreOrchestrator / A2AServiceProxy를 하나로 묶음 | `core/orchestration/super_orchestrator.py` |
+> 핵심 규칙과 개념은 [CLAUDE.md](CLAUDE.md)를 먼저 읽는다. 이 문서는 구현 상세 가이드.
 
 ---
 
@@ -990,18 +937,9 @@ DEV_MODE=true일 때만 활성화. state, memory, completed 스냅샷 반환.
 
 ---
 
-## 10. 절대 규칙 & 흔한 실수
+## 10. 흔한 실수
 
-### 8가지 절대 규칙
-
-1. **`app/core/`에 프로젝트 로직 금지.** 공통 패턴만.
-2. **Agent는 `context.build_messages()`를 사용한다.** `user_message`를 수동으로 붙이지 않는다 (이미 자동 추가됨).
-3. **DONE 이벤트에는 반드시 `state_snapshot`을 포함한다.**
-4. **`_update_memory(ctx, message)`는 DONE yield 직전에 호출한다.**
-5. **`on_error`는 `lambda e: make_error_event(e)` 패턴.** 예외를 반드시 전달.
-6. **세션 리셋 시 `memory`는 건드리지 않는다.** `state`만 초기화.
-7. **사용자 노출 문구는 `messages.py`에 분리한다.** handler에 문자열 하드코딩 금지.
-8. **`EventType` enum을 사용한다.** `"LLM_DONE"` 같은 문자열 리터럴 사용 금지.
+> 절대 규칙 8개는 [CLAUDE.md](CLAUDE.md) 참조.
 
 ### 10가지 흔한 실수
 

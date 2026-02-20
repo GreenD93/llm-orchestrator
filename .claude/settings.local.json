@@ -19,7 +19,8 @@
       "Bash(python -c:*)",
       "Bash(python -m pytest:*)",
       "Bash(xargs ls:*)",
-      "WebSearch"
+      "WebSearch",
+      "Bash(wc:*)"
     ]
   }
 }
