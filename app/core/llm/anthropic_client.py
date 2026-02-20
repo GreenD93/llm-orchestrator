@@ -12,6 +12,7 @@ from typing import Generator
 
 from app.core.config import settings
 from app.core.llm.base_client import BaseLLMClient, LLMResponse, ToolCall
+from app.core.logging import setup_logger
 
 
 class AnthropicClient(BaseLLMClient):
@@ -20,6 +21,7 @@ class AnthropicClient(BaseLLMClient):
     def __init__(self):
         from anthropic import Anthropic
         self.client = Anthropic(api_key=settings.ANTHROPIC_API_KEY)
+        self.logger = setup_logger("LLM.Anthropic")
 
     def chat(
         self,
@@ -50,7 +52,11 @@ class AnthropicClient(BaseLLMClient):
                 for t in tools
             ]
 
-        resp = self.client.messages.create(**kwargs)
+        try:
+            resp = self.client.messages.create(**kwargs)
+        except Exception as e:
+            self.logger.error(f"[chat] model={model} {type(e).__name__}: {e}")
+            raise
 
         content_text = ""
         tool_calls = []
@@ -89,14 +95,19 @@ class AnthropicClient(BaseLLMClient):
         if timeout:
             kwargs["timeout"] = timeout
 
-        with self.client.messages.stream(**kwargs) as stream:
+        try:
+            stream_ctx = self.client.messages.stream(**kwargs)
+        except Exception as e:
+            self.logger.error(f"[chat_stream] model={model} {type(e).__name__}: {e}")
+            raise
+        with stream_ctx as stream:
             for text in stream.text_stream:
                 yield text
 
     def build_assistant_message(self, response: LLMResponse) -> dict:
-        """Anthropic 응답을 assistant 메시지로 변환."""
+        """Anthropic 응답을 assistant 메시지로 변환. ContentBlock 객체를 dict로 직렬화."""
         raw = response._raw
-        return {"role": "assistant", "content": raw.content}
+        return {"role": "assistant", "content": [block.model_dump() for block in raw.content]}
 
     def build_tool_result_message(self, tool_call_id: str, content: str) -> dict:
         """Anthropic tool_result 포맷."""

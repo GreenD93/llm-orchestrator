@@ -9,16 +9,26 @@ from app.projects.transfer.agents.interaction_agent.prompt import get_system_pro
 
 class InteractionAgent(ConversationalAgent):
     response_schema = InteractionResult
-    fallback_message = "응답 생성 중 오류가 발생했어요."
+    fallback_action = "ASK"
+    fallback_message = "일시적인 오류가 발생했어요. 다시 말씀해주세요."
 
     @classmethod
     def get_system_prompt(cls) -> str:
         return get_system_prompt()
 
+    def _build_context_block(self, context: ExecutionContext) -> str:
+        state_info = {
+            "stage": context.state.stage,
+            "slots": context.state.slots.model_dump(),
+            "missing_required": context.state.missing_required,
+            "slot_errors": context.state.meta.get("slot_errors", {}),
+            "batch_total": context.state.meta.get("batch_total", 1),
+            "batch_progress": context.state.meta.get("batch_progress", 0),
+        }
+        return f"현재 이체 상태: {json.dumps(state_info, ensure_ascii=False)}"
+
     def run(self, context: ExecutionContext, **kwargs) -> dict:
-        state_info = json.dumps(context.state.model_dump(), ensure_ascii=False)
-        return super().run(context, context_block=f"현재 state:\n{state_info}")
+        return super().run(context, context_block=self._build_context_block(context))
 
     def run_stream(self, context: ExecutionContext, **kwargs):
-        state_info = json.dumps(context.state.model_dump(), ensure_ascii=False)
-        yield from super().run_stream(context, context_block=f"현재 state:\n{state_info}")
+        yield from super().run_stream(context, context_block=self._build_context_block(context))

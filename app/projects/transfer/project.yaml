@@ -12,7 +12,6 @@ agents:
   interaction:
     class: InteractionAgent
     card: agents/interaction_agent/card.json
-    stream: true
 
   execute:
     class: TransferExecuteAgent

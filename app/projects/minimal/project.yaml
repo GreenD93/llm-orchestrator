@@ -10,7 +10,6 @@ agents:
   chat:
     class: ChatAgent                        # class_name_map에서 전체 경로로 변환
     card: agents/chat_agent/card.json
-    stream: true
 
 flows:
   router: flows.router.MinimalFlowRouter

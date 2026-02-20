@@ -38,8 +38,8 @@ def build_runner(
 
     Args:
         agent_specs: {
-            "intent":  {"class": IntentAgentClass, "card": {...}, "stream": False},
-            "slot":    {"class": SlotAgentClass,   "card": {...}, "stream": False},
+            "intent":  {"class": IntentAgentClass, "card": {...}},
+            "slot":    {"class": SlotAgentClass,   "card": {...}},
         }
         schema_registry: 스키마 이름 → Pydantic 모델. AgentRunner에 전달.
         validator_map:   검증 키 → 검증 함수. AgentRunner에 전달.

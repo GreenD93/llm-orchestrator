@@ -45,3 +45,68 @@ def is_cancel(message: str) -> bool:
     문장 내 취소 신호가 하나라도 있으면 True.
     """
     return bool(_CANCEL_RE.search(message.strip()))
+
+
+# ── 슬롯 편집 + 확인 (프론트엔드 생성 패턴) ─────────────────────────────────────
+# 프론트에서 슬롯을 편집하고 "확인"을 누르면 아래 형식의 메시지가 전송된다:
+#   "받는 분 용걸이으로 하고 확인"
+#   "금액 50,000원, 메모 생일으로 하고 확인"
+# 결정론적 패턴이므로 LLM 없이 코드로 처리한다.
+
+_SLOT_EDIT_CONFIRM_RE = re.compile(r'^(.+)으로 하고 확인$')
+
+_LABEL_TO_SLOT = {
+    "받는 분": "target",
+    "금액": "amount",
+    "메모": "memo",
+    "이체일": "transfer_date",
+}
+
+
+def parse_slot_edit_confirm(message: str) -> dict | None:
+    """
+    프론트엔드 슬롯 편집 + 확인 메시지를 코드 레벨로 파싱.
+
+    Returns:
+        delta dict ({"operations": [...]}) 또는 None (패턴 불일치 시 SlotFiller에 위임).
+    """
+    m = _SLOT_EDIT_CONFIRM_RE.match(message.strip())
+    if not m:
+        return None
+
+    parts = [p.strip() for p in m.group(1).split(",")]
+    ops = []
+
+    for part in parts:
+        matched = False
+        for label, slot in _LABEL_TO_SLOT.items():
+            if part.startswith(label + " "):
+                raw_value = part[len(label):].strip()
+                if slot == "amount":
+                    parsed = _parse_amount_from_display(raw_value)
+                    if parsed is None:
+                        return None
+                    ops.append({"op": "set", "slot": slot, "value": parsed})
+                else:
+                    ops.append({"op": "set", "slot": slot, "value": raw_value})
+                matched = True
+                break
+        if not matched:
+            return None
+
+    if not ops:
+        return None
+
+    ops.append({"op": "confirm"})
+    return {"operations": ops}
+
+
+def _parse_amount_from_display(text: str) -> int | None:
+    """프론트 표시 금액 → 정수. "50,000원" → 50000"""
+    text = text.strip().replace(",", "").replace("원", "").strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        return None

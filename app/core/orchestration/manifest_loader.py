@@ -79,7 +79,6 @@ def build_agents_from_yaml(
           chat:
             class: ChatAgent                         # 단순 이름 → class_name_map 필요
             card: agents/chat_agent/card.json
-            stream: true
           intent:
             class: agents.intent_agent.agent.IntentAgent  # 전체 경로도 OK
             card: agents/intent_agent/card.json
@@ -98,7 +97,7 @@ def build_agents_from_yaml(
                 )
         cls = resolve_class(class_path, project_module)
         card = load_card(spec["card"], project_root)
-        agent_specs[key] = {"class": cls, "card": card, "stream": spec.get("stream", False)}
+        agent_specs[key] = {"class": cls, "card": card}
 
     return build_runner(
         agent_specs,

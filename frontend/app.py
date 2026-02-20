@@ -4,8 +4,15 @@
 import sys
 import os
 import uuid
+from pathlib import Path
 
+from dotenv import load_dotenv
 import streamlit as st
+
+load_dotenv(Path(__file__).resolve().parents[1] / ".env")
+
+_BACKEND_PORT = os.getenv("BACKEND_PORT", "8010")
+_DEFAULT_API_BASE = os.getenv("BACKEND_URL", f"http://localhost:{_BACKEND_PORT}")
 
 sys.path.insert(0, os.path.dirname(__file__))
 from api_client import stream_chat, get_completed, get_debug
@@ -74,6 +81,21 @@ st.markdown("""
 .batch-done     { color: #4CAF50; }
 .batch-failed   { color: #F44336; }
 
+/* ── 채팅 내 슬롯 카드 ────────────────────────────────────────────── */
+.slots-card {
+    background: rgba(128,128,128,0.06);
+    border: 1px solid rgba(128,128,128,0.15);
+    border-radius: 10px; padding: 12px 16px; margin: 8px 0;
+}
+.receipt-card {
+    background: rgba(67,160,71,0.06);
+    border: 1px solid rgba(67,160,71,0.2);
+    border-radius: 10px; padding: 12px 16px; margin: 8px 0;
+}
+.card-title {
+    font-size: 12px; font-weight: 600; opacity: 0.5; margin-bottom: 6px;
+}
+
 /* ── 안내 텍스트 (muted) ─────────────────────────────────────────── */
 .muted { opacity: 0.5; font-size: 13px; margin: 0; }
 </style>
@@ -98,6 +120,48 @@ STAGE_KO = {
     "UNSUPPORTED": ("처리 불가",     "#E53935"),
 }
 
+# ─── 금액 파싱/포맷 헬퍼 ─────────────────────────────────────────────────────
+import re as _re
+
+def _parse_korean_amount(text: str) -> int | None:
+    """한국어 금액 표현을 정수로 변환. 실패 시 None."""
+    text = text.strip().replace(",", "").replace("원", "").strip()
+    if not text:
+        return None
+    try:
+        return int(text)
+    except ValueError:
+        pass
+    total = 0
+    remaining = text
+    for unit, val in [("억", 100_000_000), ("천만", 10_000_000),
+                      ("백만", 1_000_000), ("만", 10_000), ("천", 1_000)]:
+        m = _re.search(rf"(\d+(?:\.\d+)?)\s*{unit}", remaining)
+        if m:
+            total += int(float(m.group(1)) * val)
+            remaining = remaining[:m.start()] + remaining[m.end():]
+    remaining = remaining.strip()
+    if remaining:
+        try:
+            total += int(remaining)
+        except ValueError:
+            pass
+    return total if total > 0 else None
+
+
+def _format_display_amount(amount: int) -> str:
+    """정수를 표시용 금액으로 변환. 예: 10000 → '10,000원'"""
+    return f"{amount:,}원"
+
+
+def _on_amount_change():
+    """금액 입력 필드 on_change 콜백 — 한국어 금액을 자동 포맷팅."""
+    raw = st.session_state.get("card_amount", "").strip()
+    parsed = _parse_korean_amount(raw)
+    if parsed is not None:
+        st.session_state.card_amount = _format_display_amount(parsed)
+
+
 INITIAL_MESSAGE = {
     "role": "assistant",
     "content": (
@@ -120,9 +184,10 @@ def _init_state():
         "batch_tasks":     [],      # [{slots, status}] — 배치 이체 전체 큐
         "pending_buttons": [],
         "pending_input":   None,
+        "pending_slots_card": None,
         "completed_list":  [],
         "debug_data":      {},
-        "api_base":        "http://localhost:8010",
+        "api_base":        _DEFAULT_API_BASE,
     }
     for key, val in defaults.items():
         if key not in st.session_state:
@@ -210,6 +275,48 @@ def _slot_rows_html(slots: dict) -> str:
     return html + "</div>"
 
 
+def _render_card_html(card_data: list, card_type: str = "confirm") -> str:
+    """slots_card/receipt 데이터를 채팅 내 HTML 카드로 변환."""
+    if card_type == "receipt":
+        css, title = "receipt-card", "✅ 이체 내역"
+    else:
+        css, title = "slots-card", "📋 이체 정보"
+
+    rows = ""
+    for item in card_data:
+        display = item.get("display")
+        if display:
+            val = f'<span class="slot-value">{display}</span>'
+        else:
+            val = '<span class="slot-value slot-empty">미입력</span>'
+        rows += (
+            f'<div class="slot-row">'
+            f'<span class="slot-label">{item["label"]}</span>{val}'
+            f'</div>'
+        )
+    return f'<div class="{css}"><div class="card-title">{title}</div>{rows}</div>'
+
+
+def _render_receipts_html(receipts: list) -> str:
+    """다건 영수증을 세로 스택으로 렌더링. 각 카드에 (1/N) 번호 표시."""
+    total = len(receipts)
+    parts = []
+    for i, card_data in enumerate(receipts):
+        rows = ""
+        for item in card_data:
+            display = item.get("display")
+            val = (f'<span class="slot-value">{display}</span>' if display
+                   else '<span class="slot-value slot-empty">미입력</span>')
+            rows += (f'<div class="slot-row">'
+                     f'<span class="slot-label">{item["label"]}</span>{val}</div>')
+        parts.append(
+            f'<div class="receipt-card" style="margin-bottom:4px">'
+            f'<div class="card-title">✅ 이체 내역 ({i+1}/{total})</div>'
+            f'{rows}</div>'
+        )
+    return "\n".join(parts)
+
+
 def render_transfer_state(state_snapshot):
     """현재 이체 상태 패널.
     READY + 복수 태스크: st.tabs() 로 1/N, 2/N 카드 탐색.
@@ -280,6 +387,9 @@ def render_completed(completed: list):
     if not completed:
         st.markdown("<p class='muted'>완료된 거래 없음</p>", unsafe_allow_html=True)
         return
+    # st.empty() 컨테이너 안에서 호출되므로 단일 HTML 문자열로 빌드해야 함
+    # (st.empty()는 마지막 요소만 표시하므로 st.markdown()을 여러 번 호출하면 안 됨)
+    parts = []
     for tx in reversed(completed):   # 최신 순
         state  = tx.get("state", {})
         slots  = state.get("slots", {})
@@ -296,14 +406,14 @@ def render_completed(completed: list):
         detail      = " · ".join(filter(None, [stage_ko, at]))
         memo_line   = f"<div class='tx-memo'>메모: {memo}</div>" if memo else ""
 
-        st.markdown(
+        parts.append(
             f'<div class="tx-card {extra_css}">'
             f"<div style='font-weight:600'>{target} · {amount_str}</div>"
             f"<div class='tx-detail'>{detail}</div>"
             f"{memo_line}"
-            f"</div>",
-            unsafe_allow_html=True,
+            f"</div>"
         )
+    st.markdown("\n".join(parts), unsafe_allow_html=True)
 
 
 def render_memory(debug_data: dict):
@@ -379,11 +489,31 @@ def render_memory_debug(debug_data: dict):
     state = debug_data.get("state", {})
     meta  = state.get("meta", {})
 
-    exec_err = meta.get("execution") or meta.get("slot_errors")
-    if exec_err:
-        st.markdown("**⚠️ 마지막 실행 오류:**")
-        st.json(exec_err)
+    # 1. 현재 턴 에러 (DONE 이벤트 _error)
+    turn_error = st.session_state.get("last_turn_error")
+    if turn_error:
+        st.markdown("**❌ 현재 턴 오류:**")
+        st.code(f"{turn_error.get('type', '?')}: {turn_error.get('message', '')}")
 
+    # 2. 마지막 실행 에러 (서버 state.meta.last_error)
+    last_error = meta.get("last_error")
+    if last_error:
+        st.markdown("**⚠️ 마지막 실행 오류:**")
+        st.markdown(f"- **에이전트**: `{last_error.get('agent', '?')}`")
+        st.markdown(f"- **오류**: `{last_error.get('error', '')}`")
+        if last_error.get("attempt"):
+            st.markdown(f"- **시도 횟수**: {last_error['attempt']}")
+        if last_error.get("traceback"):
+            with st.expander("스택 트레이스"):
+                st.code(last_error["traceback"], language="python")
+
+    # 3. 슬롯 검증 에러
+    slot_errors = meta.get("slot_errors")
+    if slot_errors:
+        st.markdown("**⚠️ 슬롯 검증 오류:**")
+        st.json(slot_errors)
+
+    # 4. 전체 state JSON
     with st.expander("state JSON", expanded=False):
         st.json(state)
 
@@ -435,7 +565,7 @@ with st.sidebar:
     if st.button("🔄 새 대화 시작", use_container_width=True):
         for key in ("messages", "agent_logs", "current_state", "task_progress",
                     "batch_tasks", "pending_buttons", "pending_input",
-                    "completed_list", "debug_data"):
+                    "pending_slots_card", "completed_list", "debug_data"):
             st.session_state.pop(key, None)
         st.session_state.session_id = str(uuid.uuid4())
         _init_state()
@@ -508,6 +638,13 @@ with chat_col:
     for msg in st.session_state.messages:
         with st.chat_message(msg["role"]):
             st.markdown(msg["content"])
+            if msg.get("receipts"):
+                st.markdown(_render_receipts_html(msg["receipts"]), unsafe_allow_html=True)
+            else:
+                card = msg.get("slots_card") or msg.get("receipt")
+                if card:
+                    card_type = "confirm" if msg.get("slots_card") else "receipt"
+                    st.markdown(_render_card_html(card, card_type), unsafe_allow_html=True)
 
     # ── 처리 중 ───────────────────────────────────────────────────────────────
     if st.session_state.pending_input:
@@ -519,6 +656,7 @@ with chat_col:
             st.markdown(user_msg)
         with st.chat_message("assistant"):
             response_ph = st.empty()
+            card_ph = st.empty()
             response_ph.markdown("생각 중... ⏳")
 
         agent_logs: list  = []
@@ -527,6 +665,9 @@ with chat_col:
         final_message     = ""
         final_state       = None
         final_buttons:list = []
+        final_slots_card  = None
+        final_receipt     = None
+        final_receipts    = None
 
         try:
             for event_type, data in stream_chat(
@@ -595,7 +736,30 @@ with chat_col:
                     final_message = data.get("message") or full_text
                     response_ph.markdown(final_message)
                     final_state   = data.get("state_snapshot") or {}
+                    # _error 캡처 (DEV_MODE 에러 정보)
+                    if data.get("_error"):
+                        st.session_state["last_turn_error"] = data["_error"]
+                    else:
+                        st.session_state.pop("last_turn_error", None)
                     final_buttons = data.get("ui_hint", {}).get("buttons", [])
+
+                    # 슬롯 카드 / 영수증 렌더링
+                    final_slots_card = data.get("slots_card")
+                    final_receipt    = data.get("receipt")
+                    final_receipts   = data.get("receipts")
+
+                    if final_receipts:
+                        card_ph.markdown(
+                            _render_receipts_html(final_receipts),
+                            unsafe_allow_html=True,
+                        )
+                    elif final_slots_card or final_receipt:
+                        card = final_slots_card or final_receipt
+                        card_type = "confirm" if final_slots_card else "receipt"
+                        card_ph.markdown(
+                            _render_card_html(card, card_type),
+                            unsafe_allow_html=True,
+                        )
 
                     # task_progress 초기화
                     st.session_state.task_progress = None
@@ -619,11 +783,31 @@ with chat_col:
 
         # ── 상태 저장 + 완료 거래 / 메모리 갱신 ──────────────────────────────
         st.session_state.messages.append({"role": "user", "content": user_msg})
-        st.session_state.messages.append({"role": "assistant", "content": final_message})
+        msg_data = {"role": "assistant", "content": final_message}
+        if final_slots_card:
+            msg_data["slots_card"] = final_slots_card
+        elif final_receipts:
+            msg_data["receipts"] = final_receipts
+        elif final_receipt:
+            msg_data["receipt"] = final_receipt
+        st.session_state.messages.append(msg_data)
         st.session_state.agent_logs   = agent_logs
         st.session_state.current_state = final_state
         st.session_state.batch_tasks  = batch_tasks
         st.session_state.pending_buttons = final_buttons
+        st.session_state.pending_slots_card = final_slots_card
+
+        # 새 slots_card 도착 시 위젯 키를 명시적으로 동기화.
+        # st.empty() 안에서 pop만 하면 Streamlit 위젯 캐시에 이전 값이 남는 문제 방지.
+        if final_slots_card:
+            _new_vals = {s["key"]: s.get("display") or "" for s in final_slots_card}
+            st.session_state["card_target"] = _new_vals.get("target", "")
+            st.session_state["card_amount"] = _new_vals.get("amount", "")
+            st.session_state["card_memo"]   = _new_vals.get("memo", "")
+            st.session_state["card_date"]   = _new_vals.get("transfer_date", "")
+        else:
+            for k in ("card_target", "card_amount", "card_memo", "card_date"):
+                st.session_state.pop(k, None)
 
         st.session_state.completed_list = get_completed(
             st.session_state.session_id, st.session_state.api_base
@@ -634,8 +818,61 @@ with chat_col:
 
         st.rerun()
 
-    # ── 액션 버튼 ─────────────────────────────────────────────────────────────
-    if st.session_state.pending_buttons:
+    # ── 슬롯 편집 + 액션 버튼 ──────────────────────────────────────────────────
+    _card = st.session_state.get("pending_slots_card")
+    if _card and st.session_state.pending_buttons:
+        # 슬롯별 원본값 추출
+        _orig = {s["key"]: s.get("display") or "" for s in _card}
+
+        # 편집 가능한 입력 필드 (4열: 받는 분 / 금액 / 메모 / 이체일)
+        c1, c2, c3, c4 = st.columns(4)
+        with c1:
+            st.text_input("받는 분", value=_orig.get("target", ""), key="card_target",
+                          placeholder="예: 홍길동")
+        with c2:
+            st.text_input("금액", value=_orig.get("amount", ""), key="card_amount",
+                          placeholder="예: 5만원", on_change=_on_amount_change)
+        with c3:
+            st.text_input("메모", value=_orig.get("memo", ""), key="card_memo",
+                          placeholder="예: 생일선물")
+        with c4:
+            st.text_input("이체일", value=_orig.get("transfer_date", ""), key="card_date",
+                          placeholder="예: 내일, 3월 1일")
+
+        btn_cols = st.columns(len(st.session_state.pending_buttons))
+        for i, btn_text in enumerate(st.session_state.pending_buttons):
+            with btn_cols[i]:
+                if st.button(
+                    btn_text,
+                    key=f"action_{i}_{btn_text}",
+                    use_container_width=True,
+                    type="primary" if i == 0 else "secondary",
+                ):
+                    msg = btn_text
+                    if btn_text == "확인":
+                        # 변경된 슬롯만 메시지에 포함
+                        parts = []
+                        for skey, label in [("target", "받는 분"), ("amount", "금액"),
+                                            ("memo", "메모"), ("date", "이체일")]:
+                            state_key = f"card_{skey}"
+                            new_val = st.session_state.get(state_key, "").strip()
+                            orig_val = _orig.get(
+                                "transfer_date" if skey == "date" else skey, ""
+                            )
+                            if new_val and new_val != orig_val:
+                                parts.append(f"{label} {new_val}")
+                        if parts:
+                            msg = ", ".join(parts) + "으로 하고 확인"
+                    # 상태 정리
+                    st.session_state.pending_input = msg
+                    st.session_state.pending_buttons = []
+                    st.session_state.pending_slots_card = None
+                    for k in ("card_target", "card_amount", "card_memo", "card_date"):
+                        st.session_state.pop(k, None)
+                    st.rerun()
+
+    elif st.session_state.pending_buttons:
+        # slots_card 없는 일반 버튼 (ASK_CONTINUE 등)
         btn_cols = st.columns(len(st.session_state.pending_buttons))
         for i, btn_text in enumerate(st.session_state.pending_buttons):
             with btn_cols[i]:
@@ -653,4 +890,7 @@ with chat_col:
     if prompt := st.chat_input("메시지를 입력하세요..."):
         st.session_state.pending_input = prompt
         st.session_state.pending_buttons = []
+        st.session_state.pending_slots_card = None
+        for k in ("card_target", "card_amount", "card_memo", "card_date"):
+            st.session_state.pop(k, None)
         st.rerun()

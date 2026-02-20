@@ -5,9 +5,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# ── 설정 (환경 변수로 덮어쓰기 가능) ─────────────────────────────────────────
-HOST="${HOST:-0.0.0.0}"
-PORT="${PORT:-8010}"
+# ── .env 로드 ──────────────────────────────────────────────────────────────────
+[ -f "$ROOT/.env" ] && set -a && source "$ROOT/.env" && set +a
+
+# ── 설정 (.env → 환경 변수 → 기본값 순서로 적용) ──────────────────────────────
+HOST="${BACKEND_HOST:-0.0.0.0}"
+PORT="${BACKEND_PORT:-8010}"
 LOG_LEVEL="${LOG_LEVEL:-info}"
 RELOAD="${RELOAD:-true}"
 
@@ -20,11 +23,6 @@ echo -e "${CYAN}  API Docs │  http://localhost:$PORT/docs${RESET}"
 echo -e "${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${RESET}"
 echo -e "  Reload   : ${YELLOW}$RELOAD${RESET}   Log: ${YELLOW}$LOG_LEVEL${RESET}"
 echo ""
-
-# ── .env 존재 확인 ────────────────────────────────────────────────────────────
-if [ ! -f "$ROOT/.env" ]; then
-  echo -e "${YELLOW}[warn] .env 없음. OPENAI_API_KEY 등이 설정되지 않을 수 있어요.${RESET}"
-fi
 
 # ── 실행 ──────────────────────────────────────────────────────────────────────
 RELOAD_FLAG=""

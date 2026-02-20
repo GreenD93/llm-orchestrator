@@ -202,7 +202,12 @@ class CoreOrchestrator:
                 if event.get("event") == EventType.DONE:
                     final_payload = event.get("payload")
         finally:
-            # 7. 세션 저장 — 예외가 발생해도 반드시 실행
+            # 7. 에러 정보를 state에 영속화 → 디버그 엔드포인트에서 조회 가능
+            if ctx.metadata.get("execution"):
+                ctx.state.meta["last_error"] = ctx.metadata["execution"]
+            elif ctx.state.meta.get("last_error"):
+                del ctx.state.meta["last_error"]
+            # 세션 저장 — 예외가 발생해도 반드시 실행
             self.sessions.save_state(session_id, ctx.state)
             # 7.5. DONE payload에 trace 삽입
             if final_payload and ctx.tracer:
@@ -250,7 +255,17 @@ class CoreOrchestrator:
         try:
             yield from self.run_one_turn(session_id, user_message)
         except Exception as e:
-            yield self._on_error(e) if self._on_error else make_error_event(e)
+            self.logger.error(f"[{session_id[:8]}] {type(e).__name__}: {e}")
+            error_event = self._on_error(e) if self._on_error else make_error_event(e)
+            # 에러 이벤트에 state_snapshot 보강 (프론트 상태 패널용)
+            try:
+                state, _ = self.sessions.get_or_create(session_id)
+                error_event.get("payload", {})["state_snapshot"] = (
+                    state.model_dump() if hasattr(state, "model_dump") else {}
+                )
+            except Exception:
+                pass
+            yield error_event
             raise
 
     def handle(self, session_id: str, user_message: str) -> Dict[str, Any]:

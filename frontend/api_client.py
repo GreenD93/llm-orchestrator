@@ -2,16 +2,22 @@
 """백엔드 SSE 스트림 및 REST API 클라이언트."""
 
 import json
+import os
 from typing import Any, Generator, Tuple
 
 import requests
 import sseclient
 
+_DEFAULT_API_BASE = os.getenv(
+    "BACKEND_URL",
+    f"http://localhost:{os.getenv('BACKEND_PORT', '8010')}",
+)
+
 
 def stream_chat(
     session_id: str,
     message: str,
-    api_base: str = "http://localhost:8010",
+    api_base: str = _DEFAULT_API_BASE,
 ) -> Generator[Tuple[str, Any], None, None]:
     """
     백엔드 SSE 스트림을 읽어 (event_type, data) 튜플을 yield.
@@ -44,7 +50,7 @@ def stream_chat(
         raise RuntimeError(f"서버 오류: {e.response.status_code} {e.response.text}")
 
 
-def get_completed(session_id: str, api_base: str = "http://localhost:8010") -> list:
+def get_completed(session_id: str, api_base: str = _DEFAULT_API_BASE) -> list:
     """완료된 거래 목록 조회."""
     try:
         r = requests.get(f"{api_base}/v1/agent/completed", params={"session_id": session_id}, timeout=10)
@@ -54,7 +60,7 @@ def get_completed(session_id: str, api_base: str = "http://localhost:8010") -> l
         return []
 
 
-def get_debug(session_id: str, api_base: str = "http://localhost:8010") -> dict:
+def get_debug(session_id: str, api_base: str = _DEFAULT_API_BASE) -> dict:
     """개발용 세션 내부 상태 조회 (DEV_MODE=true 시 사용 가능)."""
     try:
         r = requests.get(f"{api_base}/v1/agent/debug/{session_id}", timeout=10)

@@ -5,9 +5,12 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# ── 설정 (환경 변수로 덮어쓰기 가능) ─────────────────────────────────────────
+# ── .env 로드 ──────────────────────────────────────────────────────────────────
+[ -f "$ROOT/.env" ] && set -a && source "$ROOT/.env" && set +a
+
+# ── 설정 (.env → 환경 변수 → 기본값 순서로 적용) ──────────────────────────────
 FRONTEND_PORT="${FRONTEND_PORT:-8501}"
-BACKEND_URL="${BACKEND_URL:-http://localhost:8010}"
+BACKEND_URL="${BACKEND_URL:-http://localhost:${BACKEND_PORT:-8010}}"
 
 # ── 컬러 ──────────────────────────────────────────────────────────────────────
 CYAN='\033[0;36m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RESET='\033[0m'

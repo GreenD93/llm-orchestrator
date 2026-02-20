@@ -82,7 +82,15 @@ class ConversationalAgent(BaseAgent):
             if self.response_schema is not None:
                 self.response_schema.model_validate(data)
             return data
+        except json.JSONDecodeError as e:
+            # JSON이 아닌 평문 → LLM 원문을 message로 사용 (유용한 응답을 버리지 않음)
+            self.logger.warning(
+                f"[{self.__class__.__name__}] 응답 파싱 실패 ({type(e).__name__}): {str(e)[:80]} "
+                f"— raw: {raw[:200]!r}"
+            )
+            return {"action": self.fallback_action, "message": raw.strip() or self.fallback_message}
         except Exception as e:
+            # 스키마 검증 실패 등 → fallback 메시지
             self.logger.warning(
                 f"[{self.__class__.__name__}] 응답 파싱 실패 ({type(e).__name__}): {str(e)[:80]} "
                 f"— raw: {raw[:200]!r}"

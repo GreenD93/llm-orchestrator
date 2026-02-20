@@ -1,11 +1,8 @@
 #!/bin/bash
-# AI 이체 서비스 - 백엔드(8010) + 프론트엔드(8501) 동시 실행
+# AI 이체 서비스 - 백엔드 + 프론트엔드 동시 실행 (.env에서 포트 설정)
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 cd "$SCRIPT_DIR"
-
-BACKEND_PORT=8010
-FRONTEND_PORT=8501
 
 # ── .env 로드 ─────────────────────────────────────────────────────────────────
 if [ -f ".env" ]; then
@@ -14,8 +11,11 @@ if [ -f ".env" ]; then
     set +a
     echo ".env 로드 완료"
 else
-    echo "경고: .env 파일 없음 (OPENAI_API_KEY 등 환경변수를 직접 설정하세요)"
+    echo "경고: .env 파일 없음 (.env.example을 참고해 생성하세요)"
 fi
+
+BACKEND_PORT="${BACKEND_PORT:-8010}"
+FRONTEND_PORT="${FRONTEND_PORT:-8501}"
 
 # ── 기존 프로세스 정리 ────────────────────────────────────────────────────────
 echo "기존 프로세스 정리 중..."

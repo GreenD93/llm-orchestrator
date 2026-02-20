@@ -12,6 +12,7 @@ from openai import OpenAI
 
 from app.core.config import settings
 from app.core.llm.base_client import BaseLLMClient, LLMResponse, ToolCall
+from app.core.logging import setup_logger
 
 
 class OpenAIClient(BaseLLMClient):
@@ -19,6 +20,7 @@ class OpenAIClient(BaseLLMClient):
 
     def __init__(self):
         self.client = OpenAI(api_key=settings.OPENAI_API_KEY)
+        self.logger = setup_logger("LLM.OpenAI")
 
     def chat(
         self,
@@ -35,7 +37,11 @@ class OpenAIClient(BaseLLMClient):
         if tools:
             kwargs["tools"] = [{"type": "function", "function": t} for t in tools]
 
-        resp = self.client.chat.completions.create(**kwargs)
+        try:
+            resp = self.client.chat.completions.create(**kwargs)
+        except Exception as e:
+            self.logger.error(f"[chat] model={model} {type(e).__name__}: {e}")
+            raise
         choice = resp.choices[0]
 
         tool_calls = []
@@ -63,13 +69,17 @@ class OpenAIClient(BaseLLMClient):
         timeout: int | None = None,
     ) -> Generator[str, None, None]:
         msgs = [{"role": "system", "content": system_prompt}, *messages]
-        stream = self.client.chat.completions.create(
-            model=model,
-            messages=msgs,
-            temperature=temperature,
-            stream=True,
-            timeout=timeout,
-        )
+        try:
+            stream = self.client.chat.completions.create(
+                model=model,
+                messages=msgs,
+                temperature=temperature,
+                stream=True,
+                timeout=timeout,
+            )
+        except Exception as e:
+            self.logger.error(f"[chat_stream] model={model} {type(e).__name__}: {e}")
+            raise
         for chunk in stream:
             delta = chunk.choices[0].delta
             if delta and delta.content:

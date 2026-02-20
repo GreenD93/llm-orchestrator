@@ -6,7 +6,7 @@
 handlers.py / state 로직은 건드리지 않아도 됨.
 """
 
-from typing import Dict
+from typing import Dict, List
 from app.projects.transfer.state.models import Stage
 
 
@@ -76,8 +76,38 @@ def build_ready_message(state) -> str:
     else:
         line = f"{target}에게 {amount_str}을(를) 이체할까요?"
 
-    # 선택적 슬롯 안내 (메모·날짜 미입력 시, 단건일 때만 — 배치는 첫 발화에 이미 지정)
-    if not slots.memo and not slots.transfer_date and batch_total == 1:
-        line += "\n메모나 이체 날짜를 추가하시겠어요? 없으시면 바로 진행할게요."
+    # 선택적 슬롯 표시 (단건일 때만 — 배치는 첫 발화에 이미 지정)
+    if batch_total == 1:
+        extras = []
+        if slots.memo:
+            extras.append(f"메모: {slots.memo}")
+        if slots.transfer_date:
+            extras.append(f"이체일: {slots.transfer_date}")
+
+        if extras:
+            line += f" ({' / '.join(extras)})"
+        else:
+            line += "\n메모나 이체 날짜를 추가하시겠어요? 없으시면 바로 진행할게요."
 
     return line
+
+
+# ── 슬롯 카드 빌더 ─────────────────────────────────────────────────────────
+# 프론트에서 카드 UI로 렌더링. READY 확인 카드, EXECUTED 영수증에 공통 사용.
+
+_SLOT_DISPLAY = (
+    ("target",        "받는 분"),
+    ("amount",        "금액"),
+    ("memo",          "메모"),
+    ("transfer_date", "이체일"),
+)
+
+
+def build_slots_card(slots) -> List[Dict]:
+    """슬롯 값을 프론트 카드용 리스트로 변환."""
+    card = []
+    for key, label in _SLOT_DISPLAY:
+        value = getattr(slots, key, None)
+        display = format_amount(value) if key == "amount" else value
+        card.append({"key": key, "label": label, "value": value, "display": display})
+    return card

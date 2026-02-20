@@ -90,6 +90,22 @@ class BaseFlowHandler:
         self.memory_manager.update(ctx.memory, ctx.user_message, assistant_message)
         self.sessions.save_state(ctx.session_id, ctx.state)
 
+    # ── DONE payload 빌드 ──────────────────────────────────────────────────────
+
+    def _build_done_payload(self, ctx: ExecutionContext, payload: dict) -> dict:
+        """DONE payload에 state_snapshot을 추가한다. 수동 DONE yield 전에 호출."""
+        payload["state_snapshot"] = (
+            ctx.state.model_dump() if hasattr(ctx.state, "model_dump") else {}
+        )
+        return payload
+
+    # ── state 리셋 ───────────────────────────────────────────────────────────
+
+    def _reset_state(self, ctx: ExecutionContext, new_state) -> None:
+        """state를 초기화하고 저장한다. memory는 건드리지 않는다."""
+        ctx.state = new_state
+        self.sessions.save_state(ctx.session_id, ctx.state)
+
     # ── 공통 헬퍼 ─────────────────────────────────────────────────────────────
 
     def _stream_agent_turn(
@@ -146,8 +162,4 @@ class BaseFlowHandler:
         done_payload = dict(payload or {})
         if done_transform:
             done_payload = done_transform(done_payload)
-        # state_snapshot: 프론트가 현재 상태를 표시하는 데 사용
-        done_payload["state_snapshot"] = (
-            ctx.state.model_dump() if hasattr(ctx.state, "model_dump") else {}
-        )
-        yield {"event": EventType.DONE, "payload": done_payload}
+        yield {"event": EventType.DONE, "payload": self._build_done_payload(ctx, done_payload)}

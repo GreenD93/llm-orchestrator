@@ -31,11 +31,12 @@ from app.core.events import EventType
 from app.core.orchestration import BaseFlowHandler
 from app.core.agents.agent_runner import RetryableError, FatalExecutionError
 from app.projects.transfer.state.models import Stage, TransferState, Slots, REQUIRED_SLOTS
-from app.projects.transfer.logic import is_confirm, is_cancel
+from app.projects.transfer.logic import is_confirm, is_cancel, parse_slot_edit_confirm
 from app.projects.transfer.messages import (
     UNSUPPORTED_MESSAGE,
     TERMINAL_MESSAGES,
     build_ready_message,
+    build_slots_card,
     batch_partial_complete,
     batch_all_complete,
 )
@@ -66,21 +67,6 @@ def _apply_ui_policy(payload: dict) -> dict:
     return payload
 
 
-def _state_snapshot(ctx: ExecutionContext) -> dict:
-    """state 객체를 JSON-serializable dict로 변환. 프론트가 현재 상태를 표시하는 데 사용."""
-    return ctx.state.model_dump() if hasattr(ctx.state, "model_dump") else {}
-
-
-def _reset_session(ctx: ExecutionContext, sessions: Any) -> None:
-    """
-    이체 종료(완료·취소·실패) 후 state를 초기화한다.
-    대화 메모리(raw_history, summary_text)는 MemoryManager가 관리하므로 건드리지 않는다.
-    다음 이체 요청 시 이전 대화 맥락을 활용할 수 있다.
-    """
-    ctx.state = TransferState()
-    sessions.save_state(ctx.session_id, ctx.state)
-
-
 def _load_next_task(state: TransferState) -> bool | None:
     """
     task_queue에서 다음 배치 태스크를 꺼내 state에 적용한다.
@@ -97,13 +83,6 @@ def _load_next_task(state: TransferState) -> bool | None:
     state.missing_required = [s for s in REQUIRED_SLOTS if getattr(state.slots, s) is None]
     state.filling_turns = 0
     return len(state.missing_required) == 0
-
-
-def _yield_done(ctx: ExecutionContext, payload: dict) -> dict:
-    """DONE 이벤트 payload에 UI 정책과 state_snapshot을 추가한다."""
-    payload = _apply_ui_policy(payload)
-    payload["state_snapshot"] = _state_snapshot(ctx)
-    return payload
 
 
 # ── Flow Handlers ─────────────────────────────────────────────────────────────
@@ -128,15 +107,17 @@ class TransferFlowHandler(BaseFlowHandler):
     INIT → FILLING → READY → CONFIRMED → EXECUTED / FAILED / CANCELLED
     """
 
+    def _yield_done(self, ctx: ExecutionContext, payload: dict) -> dict:
+        """DONE payload에 UI 정책과 state_snapshot을 추가한다."""
+        payload = _apply_ui_policy(payload)
+        return self._build_done_payload(ctx, payload)
+
     def run(self, ctx: ExecutionContext) -> Generator[Dict[str, Any], None, None]:
 
         # ── 1. Slot 추출 ─────────────────────────────────────────────────────
         #
-        # READY 단계에서는 LLM 없이 코드로 직접 delta를 생성한다.
-        # 이유: 확인/취소 응답은 단순 패턴 매칭으로 충분하고, LLM이
-        #       이전 대화 문맥을 읽어 "이체하겠습니다" 등을 다른 슬롯으로 해석하는 오탐을 방지.
-        #
-        # 안전 기본값: READY + 불명확 입력 → operations:[] → READY 유지 → 확인 메시지 재표시
+        # READY 단계: 확인/취소는 코드로 직접 처리, 그 외(메모·날짜 등)는 SlotFiller 호출.
+        # StateManager 안전 장치가 confirm을 READY→CONFIRMED 전환만 허용하므로 위험 없음.
         yield {"event": EventType.AGENT_START, "payload": {"agent": "slot", "label": "정보 추출 중"}}
 
         if ctx.state.stage == Stage.READY:
@@ -145,8 +126,11 @@ class TransferFlowHandler(BaseFlowHandler):
             elif is_cancel(ctx.user_message):
                 delta = {"operations": [{"op": "cancel_flow"}]}
             else:
-                # 불명확 입력 → READY 유지하고 확인 메시지를 다시 표시 (안전 기본값)
-                delta = {"operations": []}
+                # 프론트엔드 슬롯 편집 + 확인 패턴 → 코드 레벨 파싱 (LLM 불필요)
+                delta = parse_slot_edit_confirm(ctx.user_message)
+                if delta is None:
+                    # 코드 파싱 실패 → SlotFiller LLM 호출 (메모·날짜 자유 입력 등)
+                    delta = self.runner.run("slot", ctx)
         elif is_cancel(ctx.user_message) and ctx.state.stage == Stage.FILLING:
             # FILLING 단계에서 명시적 취소 → LLM 없이 바로 취소 처리
             # INIT 단계는 진행 중인 이체가 없으므로 shortcut 미적용:
@@ -171,6 +155,12 @@ class TransferFlowHandler(BaseFlowHandler):
             }
             ctx.state.task_queue = tasks[1:]
 
+        # READY + 빈 delta → off-topic 플래그 (3e에서 InteractionAgent 폴백에 사용)
+        ready_empty_delta = (
+            ctx.state.stage == Stage.READY
+            and not delta.get("operations")
+        )
+
         # ── 2. StateManager — 슬롯 검증·단계 전이 ───────────────────────────
         ctx.state = self.state_manager_factory(ctx.state).apply(delta)
         yield {"event": EventType.AGENT_DONE, "payload": {
@@ -186,8 +176,8 @@ class TransferFlowHandler(BaseFlowHandler):
             self._update_memory(ctx, payload["message"])
             if self.completed:
                 self.completed.add(ctx.session_id, ctx.state, ctx.memory)
-            _reset_session(ctx, self.sessions)
-            yield {"event": EventType.DONE, "payload": _yield_done(ctx, payload)}
+            self._reset_state(ctx, TransferState())
+            yield {"event": EventType.DONE, "payload": self._yield_done(ctx, payload)}
             return
 
         # ── 3b. CANCELLED + 대기 큐 → 다음 배치 태스크 로드 ─────────────────
@@ -216,6 +206,9 @@ class TransferFlowHandler(BaseFlowHandler):
                 self.runner.run("execute", ctx)
                 ctx.state.stage = Stage.EXECUTED
                 ctx.state.meta["batch_executed"] = ctx.state.meta.get("batch_executed", 0) + 1
+                ctx.state.meta.setdefault("batch_receipts", []).append(
+                    build_slots_card(ctx.state.slots)
+                )
                 yield {"event": EventType.AGENT_DONE, "payload": {
                     "agent": "execute", "label": "이체 실행 완료", "success": True,
                 }}
@@ -255,22 +248,39 @@ class TransferFlowHandler(BaseFlowHandler):
                 message = TERMINAL_MESSAGES[ctx.state.stage]
 
             payload = {"message": message, "action": "DONE"}
+            # 영수증: 배치일 때 전체 영수증, 단건일 때 기존 호환
+            if ctx.state.stage in (Stage.EXECUTED, Stage.FAILED):
+                batch_receipts = ctx.state.meta.get("batch_receipts", [])
+                if len(batch_receipts) > 1:
+                    payload["receipts"] = batch_receipts
+                elif batch_receipts:
+                    payload["receipt"] = batch_receipts[0]
+                else:
+                    payload["receipt"] = build_slots_card(ctx.state.slots)
             self._update_memory(ctx, message)
             if self.completed and ctx.state.stage in (Stage.FAILED, Stage.CANCELLED):
                 self.completed.add(ctx.session_id, ctx.state, ctx.memory)
-            _reset_session(ctx, self.sessions)
-            yield {"event": EventType.DONE, "payload": _yield_done(ctx, payload)}
+            self._reset_state(ctx, TransferState())
+            yield {"event": EventType.DONE, "payload": self._yield_done(ctx, payload)}
             return
 
-        # ── 3e. READY — 결정론적 확인 메시지 ─────────────────────────────────
-        # build_ready_message()가 배치 진행 상황·슬롯 값을 읽어 메시지를 생성한다.
-        # LLM을 호출하지 않아 빠르고 일관성 있는 확인 메시지를 보장한다.
+        # ── 3e. READY — 확인 메시지 또는 InteractionAgent 폴백 ──────────────
         if ctx.state.stage == Stage.READY:
+            if ready_empty_delta:
+                # Off-topic 또는 인식 불가 → InteractionAgent가 자연스럽게 응대 후 확인 유도
+                yield from self._stream_agent_turn(ctx, "interaction", "응답 생성 중",
+                                                   done_transform=_apply_ui_policy)
+                return
+            # 슬롯 변경 반영 → 결정론적 확인 메시지 + 카드
             message = build_ready_message(ctx.state)
-            ctx.state.meta.pop("last_cancelled", None)   # 이번 확인 메시지에 "취소됐어요." 접두 제거
-            payload = {"action": "CONFIRM", "message": message}
+            ctx.state.meta.pop("last_cancelled", None)
+            payload = {
+                "action": "CONFIRM",
+                "message": message,
+                "slots_card": build_slots_card(ctx.state.slots),
+            }
             self._update_memory(ctx, message)
-            yield {"event": EventType.DONE, "payload": _yield_done(ctx, payload)}
+            yield {"event": EventType.DONE, "payload": self._yield_done(ctx, payload)}
             return
 
         # ── 3f. FILLING / INIT — InteractionAgent ────────────────────────────

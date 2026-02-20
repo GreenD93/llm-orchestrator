@@ -40,7 +40,7 @@ class TransferStateManager(BaseStateManager):
         if "_meta" in delta:
             meta = delta["_meta"]
             self.state.meta.setdefault("slot_meta", []).append(meta)
-            if meta.get("parse_error") and self.state.stage in (Stage.INIT, Stage.FILLING):
+            if meta.get("parse_error") and self.state.stage in (Stage.INIT, Stage.FILLING, Stage.READY):
                 # SlotFiller가 LLM 응답을 JSON으로 파싱하지 못함.
                 # → InteractionAgent가 "이해하지 못했어요" 안내를 하도록 slot_errors에 신호.
                 self.state.meta.setdefault("slot_errors", {})["_unclear"] = (

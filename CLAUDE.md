@@ -88,6 +88,17 @@ messages = context.build_messages("현재 상태: ...")
 | `MEMORY_KEEP_RECENT_TURNS` | 3 | 요약 후 유지할 최근 턴 수 |
 | `MEMORY_SUMMARY_MODEL` | `gpt-4o-mini` | 요약 LLM 모델 |
 
+서버 설정 (`.env` → `config.py`):
+
+| 설정 | 기본값 | 설명 |
+|------|--------|------|
+| `BACKEND_HOST` | `0.0.0.0` | 백엔드 바인드 호스트 |
+| `BACKEND_PORT` | `8010` | 백엔드 포트 |
+| `FRONTEND_PORT` | `8501` | 프론트엔드 포트 |
+
+> 모든 서버 설정은 `.env` 파일에서 일괄 관리. `.env.example`을 참고해 생성.
+> 스크립트(`scripts/*.sh`, `run.sh`), 프론트엔드(`app.py`, `api_client.py`) 모두 `.env`를 읽는다.
+
 ### SSE 이벤트 흐름
 
 ```
@@ -97,6 +108,7 @@ LLM_DONE     → LLM 전체 응답 완료 (parsed dict)
 AGENT_DONE   → agent 완료 알림 (success, retry_count, elapsed_ms)
 TASK_PROGRESS → 배치 이체 진행 상황 (index/total)
 DONE         → 턴 완료. payload에 message, state_snapshot, hooks, _trace 포함
+               + slots_card (READY 확인 카드), receipt (EXECUTED/FAILED 영수증)
 ```
 
 ### LLM vs 코드 제어 경계
@@ -106,16 +118,18 @@ DONE         → 턴 완료. payload에 message, state_snapshot, hooks, _trace �
 | 인텐트 분류 (TRANSFER/GENERAL) | 상태 전이 조건 |
 | 슬롯 추출 (자연어 → 구조화) | 슬롯 유효성 검증 (StateManager) |
 | 자연어 응답 생성 (FILLING/INIT) | READY 단계 확인/취소 분류 (`logic.py`) |
-| 대화 요약 | 명시적 취소 키워드 감지 (`logic.py`) |
-| - | confirm 유효성 (READY → CONFIRMED만 허용) |
+| READY off-topic 폴백 (InteractionAgent) | 명시적 취소 키워드 감지 (`logic.py`) |
+| 대화 요약 | confirm 유효성 (READY → CONFIRMED만 허용) |
 | - | 터미널 메시지, 세션 리셋 (`messages.py`) |
+| - | READY 확인 메시지 + 슬롯 카드 (`messages.py`) |
 
 > **LLM으로 해결하려는 것 중 명확한 분기 조건이 있으면 코드로 먼저 처리한다.**
 >
 > - READY 단계 confirm/cancel → `logic.is_confirm()` / `logic.is_cancel()` (LLM 호출 없음)
+> - READY 단계 그 외 입력 → SlotFiller LLM 호출 (메모·날짜·금액 변경 지원)
+> - READY + SlotFiller 빈 결과 → InteractionAgent 폴백 (off-topic 자연어 응대)
 > - 명시적 취소 키워드 → `logic.is_cancel()` 로 SlotFiller 전 차단
 > - confirm 안전 제약 → `state_manager._apply_op()`: stage==READY일 때만 CONFIRMED 전환
-> - READY + 불명확 입력 → operations:[] → READY 유지 (안전 기본값, LLM 없음)
 
 ---
 
@@ -126,13 +140,13 @@ DONE         → 턴 완료. payload에 message, state_snapshot, hooks, _trace �
 2. **Agent는 `context.build_messages()`를 사용한다.**
    `user_message`를 수동으로 붙이지 않는다. 이미 자동으로 추가된다.
 
-3. **DONE 이벤트에는 반드시 `state_snapshot`을 포함한다.**
+3. **DONE 이벤트에는 반드시 `state_snapshot`을 포함한다.** `self._build_done_payload(ctx, payload)` 헬퍼 사용 권장.
 
 4. **`_update_memory(ctx, message)`는 DONE yield 직전에 호출한다.** (`BaseFlowHandler` 메서드)
 
 5. **`on_error`는 `lambda e: make_error_event(e)` 패턴.** 예외를 반드시 전달한다. (`core/orchestration/defaults.py`)
 
-6. **세션 리셋 시 `memory`는 건드리지 않는다.** `state`만 초기화.
+6. **세션 리셋 시 `memory`는 건드리지 않는다.** `self._reset_state(ctx, NewState())` 사용.
 
 7. **사용자 노출 문구는 `messages.py`에 분리한다.** handler에 문자열 하드코딩 금지.
 
@@ -181,10 +195,14 @@ class MyAgent(ConversationalAgent):
 
 ## FlowHandler 패턴
 
-### `_stream_agent_turn()` 헬퍼 (공통 패턴)
+### BaseFlowHandler 공통 메서드
 
-단일 에이전트 호출로 대화 턴을 마무리하는 경우 이 헬퍼를 사용한다.
-`AGENT_START → 스트리밍 → AGENT_DONE → 메모리 저장 → DONE` 흐름을 한 줄로 처리.
+| 메서드 | 용도 |
+|--------|------|
+| `_stream_agent_turn(ctx, agent, label, done_transform=)` | 단일 에이전트로 턴 마무리 (AGENT_START→스트리밍→DONE) |
+| `_build_done_payload(ctx, payload)` | 수동 DONE 빌드 시 `state_snapshot` 자동 추가 |
+| `_reset_state(ctx, new_state)` | 터미널 후 state 초기화. memory 보존 |
+| `_update_memory(ctx, message)` | DONE yield 직전 메모리 갱신 |
 
 ```python
 # 단순 (minimal 등)
@@ -193,10 +211,16 @@ yield from self._stream_agent_turn(ctx, "chat", "응답 생성 중")
 # UI 정책 적용 (transfer 등) — done_transform으로 프로젝트별 payload 변환
 yield from self._stream_agent_turn(ctx, "interaction", "응답 생성 중",
                                    done_transform=_apply_ui_policy)
+
+# 수동 DONE 빌드 (READY/TERMINAL 등 LLM 없이 코드로 응답 생성)
+payload = {"message": msg, "action": "DONE"}
+yield {"event": EventType.DONE, "payload": self._build_done_payload(ctx, payload)}
+
+# 터미널 후 state 리셋
+self._reset_state(ctx, TransferState())
 ```
 
-`done_transform`이 없으면 LLM 원본 payload에 `state_snapshot`만 추가.
-**중간 단계에서 직접 메모리·DONE을 처리할 때는 헬퍼 사용하지 않는다** — `self._update_memory(ctx, message)`를 직접 호출한다 (READY/TERMINAL/UNSUPPORTED 분기 등).
+**중간 단계에서 직접 메모리·DONE을 처리할 때는 `_stream_agent_turn()` 사용하지 않는다** — `self._update_memory(ctx, message)`를 직접 호출한다 (READY/TERMINAL/UNSUPPORTED 분기 등).
 
 ---
 
@@ -259,7 +283,7 @@ payload = {
         {"type": "transfer_completed", "data": ctx.state.slots.model_dump()},
     ],
 }
-yield {"event": EventType.DONE, "payload": _yield_done(ctx, payload)}
+yield {"event": EventType.DONE, "payload": self._yield_done(ctx, payload)}
 ```
 
 ### manifest에 서버 사이드 핸들러 등록
@@ -459,7 +483,8 @@ app/projects/<name>/
 │   └── <agent>/
 │       ├── agent.py   ← BaseAgent 상속. run() 또는 run_stream() 구현
 │       ├── prompt.py  ← get_system_prompt() 함수
-│       └── card.json  ← LLM provider·model·temperature·policy·tools 설정
+│       └── card.json  ← LLM provider·model·temperature·policy(timeout_sec)·tools 설정
+├── knowledge/             ← (선택) RAG·외부 지식 저장소. retriever.search() 구현
 ├── state/
 │   ├── models.py      ← BaseState + Stage enum + Slots + SLOT_SCHEMA
 │   ├── state_manager.py ← BaseStateManager 상속. apply(delta) 구현
@@ -541,6 +566,8 @@ orchestrator = SuperOrchestrator(
 
 | 버전 | 내용 |
 |------|------|
+| v1.8.0 | 코어 패턴 추출 (`_build_done_payload`, `_reset_state`), handlers.py 정리 (`_yield_done` 메서드화, 모듈 함수 제거), InteractionAgent context_block 구조화, card.json timeout_sec 일관성, minimal provider 명시 |
+| v1.7.0 | READY 슬롯 편집 (메모·날짜·금액 변경), off-topic 폴백 (READY/FILLING), 재이체 기능 (메모리 기반), 슬롯 카드 UI + 영수증, `.env` 서버 설정 통합, 프론트엔드 슬롯 편집 + 금액 자동 포맷 |
 | v1.6.0 | LLM 프로바이더 추상화 (BaseLLMClient + OpenAI/Anthropic), 데드코드 제거 (hooks.py, flow_utils.py, output_schema, stream 파라미터), `_update_memory()` 메서드로 통합, tool 스키마 중립 포맷 |
 | v1.5.0 | TurnTracer (에이전트 실행 추적), AgentResult (표준 응답), ManifestBuilder (manifest 간소화) |
 | v1.4.0 | 전체 core·project 파일 종합 주석 정비. `agent_runner.py` `"LLM_DONE"` 문자열 리터럴 → `EventType.LLM_DONE` 버그 수정 |

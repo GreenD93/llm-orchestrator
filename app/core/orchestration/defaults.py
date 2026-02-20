@@ -1,6 +1,7 @@
 # app/core/orchestration/defaults.py
 """Orchestrator 공통 기본값. manifest.py의 on_error 등에서 사용한다."""
 
+from app.core.config import settings
 from app.core.events import EventType
 
 
@@ -12,14 +13,17 @@ def make_error_event(exc: Exception | None = None) -> dict:
     사용법 (manifest.py):
         "on_error": lambda e: make_error_event(e),
     """
-    return {
-        "event": EventType.DONE,
-        "payload": {
-            "message": _user_message(exc),
-            "next_action": "ASK",
-            "ui_hint": {},
-        },
+    payload = {
+        "message": _user_message(exc),
+        "next_action": "ASK",
+        "ui_hint": {},
     }
+    if exc and settings.DEV_MODE:
+        payload["_error"] = {
+            "type": type(exc).__name__,
+            "message": str(exc)[:500],
+        }
+    return {"event": EventType.DONE, "payload": payload}
 
 
 def _user_message(exc: Exception | None) -> str:

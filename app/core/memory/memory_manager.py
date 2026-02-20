@@ -79,6 +79,7 @@ class MemoryManager:
         summarize_threshold: int | None = None,
         keep_recent_turns: int | None = None,
         summary_model: str | None = None,
+        summary_provider: str = "openai",
         # 서비스별 override 포인트 — None이면 모듈 상단 기본값 사용
         summary_system_prompt: str | None = None,
         summary_user_template: str | None = None,
@@ -90,6 +91,7 @@ class MemoryManager:
             summarize_threshold:   요약 트리거 기준 턴 수. None이면 settings 값 사용
             keep_recent_turns:     요약 후 유지할 최근 턴 수
             summary_model:         요약 LLM 모델명
+            summary_provider:      요약 LLM 프로바이더 ("openai" | "anthropic")
             summary_system_prompt: 요약 LLM system 메시지 override
             summary_user_template: 요약 LLM user 메시지 템플릿 override ({memory_block}, {dialog} 변수 필요)
         """
@@ -100,6 +102,7 @@ class MemoryManager:
         self.summarize_threshold = summarize_threshold or settings.MEMORY_SUMMARIZE_THRESHOLD
         self.keep_recent_turns   = keep_recent_turns   or settings.MEMORY_KEEP_RECENT_TURNS
         self.summary_model       = summary_model       or settings.MEMORY_SUMMARY_MODEL
+        self.summary_provider    = summary_provider
         self.summary_system_prompt  = summary_system_prompt  or _DEFAULT_SUMMARY_SYSTEM
         self.summary_user_template  = summary_user_template  or _DEFAULT_SUMMARY_TEMPLATE
         self.logger = setup_logger("MemoryManager")
@@ -107,10 +110,10 @@ class MemoryManager:
 
     @property
     def llm(self):
-        """LLM 클라이언트를 지연 초기화. 요약이 필요없으면 OpenAI 클라이언트를 생성하지 않는다."""
+        """LLM 클라이언트를 지연 초기화. 요약이 필요없으면 클라이언트를 생성하지 않는다."""
         if self._llm is None:
-            from app.core.llm.openai_client import OpenAIClient
-            self._llm = OpenAIClient()
+            from app.core.llm import create_llm_client
+            self._llm = create_llm_client(self.summary_provider)
         return self._llm
 
     # ── Public API ─────────────────────────────────────────────────────────────
@@ -192,9 +195,7 @@ class MemoryManager:
         resp = self.llm.chat(
             model=self.summary_model,
             temperature=0,   # 요약은 결정론적으로
-            messages=[
-                {"role": "system", "content": self.summary_system_prompt},
-                {"role": "user",   "content": user_content},
-            ],
+            system_prompt=self.summary_system_prompt,
+            messages=[{"role": "user", "content": user_content}],
         )
-        return (resp.choices[0].message.content or "").strip()
+        return (resp.content or "").strip()

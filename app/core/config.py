@@ -9,6 +9,13 @@ load_dotenv(Path(__file__).resolve().parents[2] / ".env")
 
 class Settings(BaseModel):
     APP_NAME: str = os.getenv("APP_NAME", "transfer-ai")
+
+    # 서버
+    BACKEND_HOST: str = os.getenv("BACKEND_HOST", "0.0.0.0")
+    BACKEND_PORT: int = int(os.getenv("BACKEND_PORT", "8010"))
+    FRONTEND_PORT: int = int(os.getenv("FRONTEND_PORT", "8501"))
+
+    # API Keys
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     ANTHROPIC_API_KEY: str = os.getenv("ANTHROPIC_API_KEY", "")
     DEV_MODE: bool = os.getenv("DEV_MODE", "true").lower() == "true"
